@@ -72,8 +72,16 @@ const getGitHubProfile = async (username) => {
     }
 
     return {
-        avatarUrl: avatarUrl,
+        platform: 'github',
         username: userItem.login || username,
+        displayName: userItem.name || userItem.login || username,
+        profileImage: avatarUrl,
+        followers: userItem.followers || 0,
+        following: followingCount,
+        posts: userItem.publicRepos || 0,
+        description: userItem.bio || '',
+        profileUrl: `https://github.com/${username}`,
+        avatarUrl: avatarUrl,
         name: userItem.name || userItem.login || username,
         bio: userItem.bio || '',
         followersCount: userItem.followers || 0,

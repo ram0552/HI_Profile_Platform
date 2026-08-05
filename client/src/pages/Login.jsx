@@ -34,7 +34,14 @@ export default function Login() {
       if (res.ok && data.success) {
         toast('Login successful! 🎉')
         loginUser(data.data.user, data.data.accessToken, data.data.refreshToken)
-        setTimeout(() => navigate('/upload'), 1000)
+        const onboarding = data.data.user?.onboarding
+        let targetStep = '/upload'
+        if (onboarding?.isCompleted) {
+          targetStep = '/bento'
+        } else if (onboarding?.currentStep) {
+          targetStep = onboarding.currentStep
+        }
+        setTimeout(() => navigate(targetStep), 1000)
       } else {
         const errorMsg = data.message || 'Login failed'
         toast(errorMsg)

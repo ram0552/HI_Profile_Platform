@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOnboarding } from '../context/OnboardingContext'
+import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
 
 const BIOS = [
@@ -22,6 +23,7 @@ function AvatarDisplay({ avatar }) {
 
 export default function Profile() {
   const { avatar, claimedUsername, setProfileName, setProfileBio } = useOnboarding()
+  const { accessToken } = useAuth()
   const [name, setName] = useState(() => {
     if (claimedUsername && claimedUsername.toLowerCase() !== 'hi') {
       return claimedUsername.charAt(0).toUpperCase() + claimedUsername.slice(1)
@@ -34,12 +36,36 @@ export default function Profile() {
 
   const avatarBg = avatar?.type === 'emoji' ? avatar.bg : ''
 
-  const handleNext = () => {
+  const submitBio = async (bioVal, nameVal) => {
+    try {
+      if (accessToken) {
+        await fetch('http://localhost:3001/api/profile/bio', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`
+          },
+          credentials: 'include',
+          body: JSON.stringify({ bio: bioVal, fullName: nameVal })
+        })
+      }
+    } catch (e) {
+      console.error('Failed to update bio on server', e)
+    }
+  }
+
+  const handleNext = async () => {
     if (!name.trim()) { toast('Please enter your name!'); return }
     setProfileName(name.trim())
     setProfileBio(bio.trim())
+    await submitBio(bio.trim(), name.trim())
     toast('Profile set successfully!')
-    setTimeout(() => navigate('/setup'), 1200)
+    setTimeout(() => navigate('/setup'), 1000)
+  }
+
+  const handleSkip = async () => {
+    await submitBio(bio.trim() || '', name.trim() || '')
+    navigate('/setup')
   }
 
   return (
@@ -65,7 +91,7 @@ export default function Profile() {
 
         {/* Buttons */}
         <div style={{ display: 'flex', gap: 14 }}>
-          <button onClick={() => navigate('/setup')} style={{ height: 46, padding: '0 28px', borderRadius: 10, background: '#fff', border: '1.5px solid #E2E2E8', fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer' }}>Skip</button>
+          <button onClick={handleSkip} style={{ height: 46, padding: '0 28px', borderRadius: 10, background: '#fff', border: '1.5px solid #E2E2E8', fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer' }}>Skip</button>
           <button onClick={handleNext} style={{ height: 46, padding: '0 28px', borderRadius: 10, background: '#3B82F6', color: '#fff', border: 'none', fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer', boxShadow: '0 4px 12px rgba(59,130,246,0.15)' }}>Next</button>
         </div>
       </div>

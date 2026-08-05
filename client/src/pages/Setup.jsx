@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOnboarding } from '../context/OnboardingContext'
+import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
 
 const PLATFORMS = [
@@ -24,14 +25,39 @@ function AvatarDisplay({ avatar }) {
 
 export default function Setup() {
   const { avatar, profileName, profileBio, socialLinks, setSocialLinks } = useOnboarding()
+  const { accessToken } = useAuth()
   const [links, setLinks] = useState(() => socialLinks || {})
   const navigate = useNavigate()
   const [toastMsg, toastShow, toast] = useToast()
 
-  const handleNext = () => {
+  const submitSocialLinks = async (linksPayload) => {
+    try {
+      if (accessToken) {
+        await fetch('http://localhost:3001/api/profile/social', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`
+          },
+          credentials: 'include',
+          body: JSON.stringify({ socialLinks: linksPayload })
+        })
+      }
+    } catch (e) {
+      console.error('Failed to update social links on server', e)
+    }
+  }
+
+  const handleNext = async () => {
     setSocialLinks(links)
+    await submitSocialLinks(links)
     toast('Social links saved!')
-    setTimeout(() => navigate('/select'), 1200)
+    setTimeout(() => navigate('/select'), 1000)
+  }
+
+  const handleSkip = async () => {
+    await submitSocialLinks(links || {})
+    navigate('/select')
   }
 
   const avatarBg = avatar?.type === 'emoji' ? avatar.bg : ''
@@ -123,7 +149,7 @@ export default function Setup() {
         {/* Action buttons */}
         <div style={{ display: 'flex', gap: 14, width: '100%', justifyContent: 'center' }}>
           <button
-            onClick={() => navigate('/select')}
+            onClick={handleSkip}
             style={{
               height: 46,
               width: 90,

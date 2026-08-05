@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOnboarding } from '../context/OnboardingContext'
+import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
 
 function AvatarPreview({ avatar, size = 56 }) {
@@ -16,14 +17,32 @@ function AvatarPreview({ avatar, size = 56 }) {
 
 export default function Select() {
   const { avatar, profileName, profileBio, socialLinks, setSelectedTemplate } = useOnboarding()
+  const { accessToken } = useAuth()
   const [selected, setSelected] = useState('bento')
   const navigate = useNavigate()
   const [toastMsg, toastShow, toast] = useToast()
   const name = profileName || 'Your Name'
   const bio  = profileBio  || 'Nice to meet you!'
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     setSelectedTemplate(selected)
+    
+    try {
+      if (accessToken) {
+        await fetch('http://localhost:3001/api/profile/template', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`
+          },
+          credentials: 'include',
+          body: JSON.stringify({ selectedTemplate: selected })
+        })
+      }
+    } catch (e) {
+      console.error('Failed to update template on server', e)
+    }
+
     toast(`Template saved: ${selected === 'bento' ? 'Bento Profile' : 'Professional Timeline'}!`)
     setTimeout(() => {
       if (selected === 'timeline') {
@@ -31,7 +50,7 @@ export default function Select() {
       } else {
         navigate('/bento')
       }
-    }, 1400)
+    }, 1200)
   }
 
   const cardStyle = (id) => ({

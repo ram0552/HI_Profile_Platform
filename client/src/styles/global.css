@@ -5937,3 +5937,59 @@ input:checked+.db-toggle-slider:before {
     max-width: 90%;
     line-height: 1.4;
 }
+
+/* Bento Block Card Layout & Hardware Accelerated Transitions */
+.bento-block-card {
+  position: absolute;
+  border-radius: 18px;
+  box-sizing: border-box;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  user-select: none;
+}
+
+.bento-block-card:not(.is-dragging) {
+  transition: left 0.25s cubic-bezier(0.2, 0, 0, 1),
+              top 0.25s cubic-bezier(0.2, 0, 0, 1),
+              width 0.25s ease,
+              height 0.25s ease;
+}
+
+.bento-block-card.is-dragging {
+  transition: none !important;
+  cursor: grabbing !important;
+  z-index: 50 !important;
+}
+
+.bento-card-resize-handle.right {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 15;
+}
+
+.bento-card-resize-handle.bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 10px;
+  cursor: ns-resize;
+  z-index: 15;
+}
+
+.bento-card-resize-handle.corner {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 16;
+}

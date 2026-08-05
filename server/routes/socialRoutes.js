@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getGitHubProfile } = require('../services/githubService');
+const { getInstagramProfile } = require('../services/instagramService');
 const { getYouTubeProfile } = require('../services/youtubeService');
 const { getTwitterProfile } = require('../services/twitterService');
 const { getLinkedInProfile, normalizeLinkedInUsername } = require('../services/linkedinService');
@@ -290,6 +291,38 @@ router.get('/dribbble/:username', async (req, res) => {
                     shot.imageUrl = `${baseProxyUrl}${encodeURIComponent(shot.imageUrl)}`;
                 }
                 return shot;
+            });
+        }
+        
+        return { profile };
+    }, res);
+});
+
+// Instagram profile endpoint
+router.get('/instagram/:username', async (req, res) => {
+    const username = (req.params.username || '').trim().toLowerCase();
+    if (!username) {
+        return res.status(400).json({ success: false, error: 'Username is required' });
+    }
+    
+    const cacheKey = `instagram:${username}`;
+    const dedupeKey = `instagram:${username}`;
+    
+    await handleCachedRequest(cacheKey, dedupeKey, async () => {
+        const profile = await getInstagramProfile(username);
+        const host = req.headers.host;
+        const baseProxyUrl = `${req.protocol}://${host}/api/social/proxy?url=`;
+        
+        if (profile.profilePicture) {
+            profile.profilePicture = `${baseProxyUrl}${encodeURIComponent(profile.profilePicture)}`;
+        }
+        
+        if (profile.recentPosts) {
+            profile.recentPosts = profile.recentPosts.map(post => {
+                if (post.imageUrl) {
+                    post.imageUrl = `${baseProxyUrl}${encodeURIComponent(post.imageUrl)}`;
+                }
+                return post;
             });
         }
         

@@ -84,15 +84,24 @@ const getYouTubeProfile = async (usernameOrChannelId) => {
             uploadedAt: video.date || ''
         }));
 
+    const cleanUsername = usernameOrChannelId.replace(/^@/, '');
+
     return {
+        platform: 'youtube',
+        username: cleanUsername,
+        displayName: channelName,
+        profileImage: channelAvatarUrl,
+        followers: subscribersCount,
+        following: 0,
+        posts: videoCount,
+        description: channelDescription,
+        profileUrl: channelUrl,
         profilePicture: channelAvatarUrl,
         channelName: channelName,
         handle: channelUsername.startsWith('@') ? channelUsername : `@${channelUsername}`,
-        description: channelDescription,
         subscribersCount: subscribersCount,
         videoCount: videoCount,
         viewCount: viewCount,
-        channelUrl: channelUrl,
         recentVideos: videos
     };
 };

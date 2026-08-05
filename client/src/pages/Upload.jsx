@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOnboarding } from '../context/OnboardingContext'
+import { useAuth } from '../context/AuthContext'
 import EditPhotoModal from '../components/EditPhotoModal'
 import Toast, { useToast } from '../components/Toast'
 
@@ -14,6 +15,7 @@ const AVATARS = [
 export default function Upload() {
   const fileRef = useRef(null)
   const { setAvatar } = useOnboarding()
+  const { accessToken } = useAuth()
   const navigate = useNavigate()
   const [toastMsg, toastShow, toast] = useToast()
 
@@ -52,14 +54,36 @@ export default function Upload() {
     toast(`Selected avatar: ${emoji}`)
   }
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
+    let avatarPayload = null
     if (source === 'file') {
-      setAvatar({ type: 'file', data: previewSrc, transform: previewTransform, bg: '' })
+      avatarPayload = { type: 'file', data: previewSrc, transform: previewTransform, bg: '' }
     } else if (source === 'emoji') {
-      setAvatar({ type: 'emoji', data: selectedEmoji, transform: '', bg: selectedBg })
+      avatarPayload = { type: 'emoji', data: selectedEmoji, transform: '', bg: selectedBg }
     }
+
+    if (avatarPayload) {
+      setAvatar(avatarPayload)
+    }
+
+    try {
+      if (accessToken) {
+        await fetch('http://localhost:3001/api/profile/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`
+          },
+          credentials: 'include',
+          body: JSON.stringify({ avatar: avatarPayload })
+        })
+      }
+    } catch (e) {
+      console.error('Failed to save avatar to server', e)
+    }
+
     toast('Photo saved successfully!')
-    setTimeout(() => navigate('/profile'), 1200)
+    setTimeout(() => navigate('/profile'), 1000)
   }
 
   return (

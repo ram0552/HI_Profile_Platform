@@ -1,0 +1,16 @@
+const express = require('express');
+const router = express.Router();
+const profileController = require('../controllers/profileController');
+const { protect } = require('../middleware/authMiddleware');
+
+// Protected onboarding routes (updating profile & onboarding state)
+router.post('/upload', protect, profileController.uploadAvatar);
+router.post('/bio', protect, profileController.updateBio);
+router.post('/social', protect, profileController.updateSocialLinks);
+router.post('/template', protect, profileController.selectTemplate);
+
+// Profile detail routes
+router.get('/me', protect, profileController.getProfileMe);
+router.get('/user/:username', profileController.getPublicProfile);
+
+module.exports = router;

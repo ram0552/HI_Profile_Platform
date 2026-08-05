@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const useragent = require('express-useragent');
 
 const User = require('../models/User');
+const Profile = require('../models/Profile');
 const UsernameReservation = require('../models/UsernameReservation');
 const VerificationToken = require('../models/VerificationToken');
 const PasswordResetToken = require('../models/PasswordResetToken');
@@ -280,7 +281,20 @@ const register = async (req, res) => {
                 provider: 'local',
                 providerId: cleanEmail,
                 linkedAt: new Date()
-            }]
+            }],
+            onboarding: {
+                currentStep: '/upload',
+                completionPercentage: 0,
+                isCompleted: false,
+                completedAt: null,
+                stepTracking: { upload: false, profile: false, setup: false, select: false }
+            }
+        });
+
+        // Create initial Profile document for the user
+        await Profile.create({
+            userId: newUser._id,
+            username: cleanUsername
         });
 
         // Mark reservation as claimed if present
@@ -1043,8 +1057,18 @@ const googleCallback = async (req, res) => {
             if (!user.googleId) {
                 user.googleId = googleId;
             }
-            if (!user.profileImage && picture) {
-                user.profileImage = picture;
+
+            // Ensure Profile document exists
+            let profile = await Profile.findOne({ userId: user._id });
+            if (!profile) {
+                profile = await Profile.create({
+                    userId: user._id,
+                    username: user.username,
+                    profileImage: picture || ''
+                });
+            } else if (!profile.profileImage && picture) {
+                profile.profileImage = picture;
+                await profile.save();
             }
 
             const existingProvider = user.authenticationProviders.find(p => p.provider === 'google');
@@ -1087,8 +1111,9 @@ const googleCallback = async (req, res) => {
             await user.save();
             setAuthCookies(res, accessToken, refreshToken);
 
-            console.log(`[Google OAuth Success] Redirecting user ${user.email} to frontend /upload`);
-            return res.redirect(`${clientUrl}/upload?accessToken=${accessToken}&refreshToken=${refreshToken}`);
+            const targetStep = (user.onboarding && user.onboarding.isCompleted) ? '/bento' : (user.onboarding?.currentStep || '/upload');
+            console.log(`[Google OAuth Success] Redirecting user ${user.email} to frontend ${targetStep}`);
+            return res.redirect(`${clientUrl}${targetStep}?accessToken=${accessToken}&refreshToken=${refreshToken}`);
         } else {
             console.log(`[Google OAuth New User] User ${email} does not exist. Redirecting to /register prefill`);
             const redirectParams = new URLSearchParams({
@@ -1213,7 +1238,19 @@ const githubCallback = async (req, res) => {
         if (user) {
             console.log(`[GitHub OAuth Login] Found existing user: ${user.email}`);
             if (!user.githubId) user.githubId = githubId;
-            if (!user.profileImage && picture) user.profileImage = picture;
+
+            // Ensure Profile document exists
+            let profile = await Profile.findOne({ userId: user._id });
+            if (!profile) {
+                profile = await Profile.create({
+                    userId: user._id,
+                    username: user.username,
+                    profileImage: picture || ''
+                });
+            } else if (!profile.profileImage && picture) {
+                profile.profileImage = picture;
+                await profile.save();
+            }
 
             const existingProvider = user.authenticationProviders.find(p => p.provider === 'github');
             if (!existingProvider) {
@@ -1255,8 +1292,9 @@ const githubCallback = async (req, res) => {
             await user.save();
             setAuthCookies(res, accessToken, refreshToken);
 
-            console.log(`[GitHub OAuth Success] Redirecting user ${user.email} to frontend /upload`);
-            return res.redirect(`${clientUrl}/upload?accessToken=${accessToken}&refreshToken=${refreshToken}`);
+            const targetStep = (user.onboarding && user.onboarding.isCompleted) ? '/bento' : (user.onboarding?.currentStep || '/upload');
+            console.log(`[GitHub OAuth Success] Redirecting user ${user.email} to frontend ${targetStep}`);
+            return res.redirect(`${clientUrl}${targetStep}?accessToken=${accessToken}&refreshToken=${refreshToken}`);
         } else {
             console.log(`[GitHub OAuth New User] User ${email} does not exist. Redirecting to /register prefill`);
             const redirectParams = new URLSearchParams({

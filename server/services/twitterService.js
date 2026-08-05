@@ -106,8 +106,15 @@ const getTwitterProfile = async (rawUsername) => {
 
     return {
         success: true,
+        platform: 'twitter',
         username: username,
         displayName: displayName,
+        profileImage: profilePicture,
+        followers: followersCount,
+        following: followingCount,
+        posts: postCount,
+        description: bio,
+        profileUrl: `https://x.com/${username}`,
         bio: bio,
         profilePicture: profilePicture,
         followersCount: followersCount,

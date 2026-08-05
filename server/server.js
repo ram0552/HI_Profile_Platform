@@ -9,6 +9,8 @@ const helmet = require('helmet');
 const { connectDB } = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
+const profileRoutes = require('./routes/profileRoutes');
+const blockRoutes = require('./routes/blockRoutes');
 const instagramRoutes = require('./routes/instagramRoutes');
 const socialRoutes = require('./routes/socialRoutes');
 
@@ -32,6 +34,10 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/v1/profile', profileRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/v1/profile-blocks', blockRoutes);
+app.use('/api/profile-blocks', blockRoutes);
 app.use('/api/instagram', instagramRoutes);
 app.use('/api/social', socialRoutes);
 

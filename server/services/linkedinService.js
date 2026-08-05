@@ -143,7 +143,15 @@ const getLinkedInProfile = async (rawUsername) => {
 
     return {
         success: true,
+        platform: 'linkedin',
         username: username,
+        displayName: fullName,
+        profileImage: profilePicture,
+        followers: followersCount || connectionsCount,
+        following: 0,
+        posts: recentPosts.length,
+        description: headline || bio,
+        profileUrl: profileUrl,
         profile: {
             fullName,
             profilePicture,

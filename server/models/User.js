@@ -86,10 +86,6 @@ const userSchema = new mongoose.Schema({
         enum: ['user', 'admin'],
         default: 'user'
     },
-    profileImage: {
-        type: String,
-        default: ''
-    },
     emailVerified: {
         type: Boolean,
         default: false
@@ -121,17 +117,42 @@ const userSchema = new mongoose.Schema({
         default: null
     },
     loginHistory: [loginHistorySchema],
-    profileCompletion: {
-        type: Number,
-        default: 0
-    },
-    theme: {
-        type: String,
-        default: 'light'
-    },
-    selectedTemplate: {
-        type: String,
-        default: 'default'
+    onboarding: {
+        type: new mongoose.Schema({
+            currentStep: {
+                type: String,
+                enum: ['/upload', '/profile', '/setup', '/select', 'completed'],
+                default: '/upload'
+            },
+            completionPercentage: {
+                type: Number,
+                default: 0
+            },
+            isCompleted: {
+                type: Boolean,
+                default: false
+            },
+            completedAt: {
+                type: Date,
+                default: null
+            },
+            stepTracking: {
+                type: new mongoose.Schema({
+                    upload: { type: Boolean, default: false },
+                    profile: { type: Boolean, default: false },
+                    setup: { type: Boolean, default: false },
+                    select: { type: Boolean, default: false }
+                }, { _id: false }),
+                default: () => ({ upload: false, profile: false, setup: false, select: false })
+            }
+        }, { _id: false }),
+        default: () => ({
+            currentStep: '/upload',
+            completionPercentage: 0,
+            isCompleted: false,
+            completedAt: null,
+            stepTracking: { upload: false, profile: false, setup: false, select: false }
+        })
     },
     preferences: {
         type: Object,

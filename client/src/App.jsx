@@ -36,6 +36,7 @@ export default function App() {
             <Route path="/timeline" element={<TimelineView />} />
             <Route path="/timeline-live" element={<TimelineLive />} />
             <Route path="/bento" element={<BentoView />} />
+            <Route path="/:username" element={<BentoView isPublic={true} />} />
           </Routes>
         </OnboardingProvider>
       </AuthProvider>

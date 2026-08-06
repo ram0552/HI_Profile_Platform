@@ -99,3 +99,49 @@ export const getInitials = (name = '') => {
   }
   return parts[0].substring(0, 2).toUpperCase();
 };
+
+/**
+ * Robustly extract recent posts / content array from any SocialProfile or block object
+ * Searches all possible locations (MongoDB normalized, scraper rawData, nested profile objects)
+ */
+export const extractRecentPosts = (sp = {}, block = {}) => {
+  const candidates = [
+    sp?.recentContent,
+    sp?.recentPosts,
+    sp?.recentVideos,
+    sp?.recentRepos,
+    sp?.posts,
+    sp?.videos,
+    sp?.repositories,
+    sp?.profile?.recentPosts,
+    sp?.profile?.recentVideos,
+    sp?.profile?.recentRepos,
+    sp?.profile?.posts,
+    sp?.rawData?.recentPosts,
+    sp?.rawData?.recentVideos,
+    sp?.rawData?.recentRepos,
+    sp?.rawData?.posts,
+    sp?.rawData?.videos,
+    sp?.rawData?.repositories,
+    sp?.rawData?.profile?.recentPosts,
+    sp?.rawData?.profile?.recentVideos,
+    sp?.rawData?.profile?.posts,
+    sp?.rawData?.data?.recentPosts,
+    sp?.rawData?.data?.posts,
+    sp?.data?.recentPosts,
+    sp?.data?.posts,
+    block?.socialProfile?.recentContent,
+    block?.socialProfile?.recentPosts,
+    block?.socialProfile?.posts,
+    block?.socialProfile?.rawData?.recentPosts,
+    block?.socialProfile?.rawData?.posts
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length > 0) {
+      return candidate;
+    }
+  }
+
+  return [];
+};

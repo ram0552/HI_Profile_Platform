@@ -1,11 +1,26 @@
+import React, { useState } from 'react';
 import SocialMetaRow from './SocialMetaRow';
 import SocialStatBar from './SocialStatBar';
 import SocialFooterBar from './SocialFooterBar';
-import { isLikelyFailedScrape, formatRelativeTime } from '../../utils/socialHelpers';
+import SocialAvatar from './SocialAvatar';
+import SocialSkeleton from './SocialSkeleton';
+import SocialEmptyState from './SocialEmptyState';
+import SocialErrorState from './SocialErrorState';
+import { isLikelyFailedScrape, formatRelativeTime, formatStatCount, extractRecentPosts } from '../../utils/socialHelpers';
 
-export default function TwitterWidget({ block, socialProfile }) {
-  const sp = socialProfile || block.socialProfile || {};
-  const config = block.configuration || {};
+export default function TwitterWidget({ block, socialProfile, loading = false, error = null, onRetry }) {
+  const [expandedBio, setExpandedBio] = useState(false);
+  const [hoveredTweetIdx, setHoveredTweetIdx] = useState(null);
+  const sp = socialProfile || block?.socialProfile || {};
+  const config = block?.configuration || {};
+
+  if (loading) {
+    return <SocialSkeleton platform="twitter" />;
+  }
+
+  if (error) {
+    return <SocialErrorState onRetry={onRetry} message={error} />;
+  }
 
   const username = sp.username || config.username || config.handle || 'user';
   const displayName = sp.displayName || username;
@@ -14,14 +29,12 @@ export default function TwitterWidget({ block, socialProfile }) {
   const followers = sp.followers !== undefined ? sp.followers : 0;
   const following = sp.following !== undefined ? sp.following : 0;
   const tweetsCount = sp.posts !== undefined ? sp.posts : 0;
-  const bio = sp.description || 'No bio available.';
+  const bio = sp.description || '';
   const profileUrl = sp.profileUrl || `https://x.com/${username}`;
   const lastFetched = sp.lastFetched || null;
   const isFailed = isLikelyFailedScrape(sp);
 
-  const recentTweets = (sp.recentContent && sp.recentContent.length > 0)
-    ? sp.recentContent
-    : (sp.rawData?.recentPosts || []);
+  const recentTweets = extractRecentPosts(sp, block);
 
   const stats = [
     { label: 'Followers', value: followers },
@@ -30,8 +43,8 @@ export default function TwitterWidget({ block, socialProfile }) {
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between', fontFamily: 'Inter, sans-serif' }}>
-      {/* Header */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between', fontFamily: 'Inter, sans-serif', boxSizing: 'border-box' }}>
+      {/* Fixed Header */}
       <SocialMetaRow
         displayName={displayName}
         username={username}
@@ -40,49 +53,146 @@ export default function TwitterWidget({ block, socialProfile }) {
         platform="twitter"
       />
 
-      {/* Stats */}
-      <SocialStatBar stats={stats} />
+      {/* Metric Stats */}
+      <SocialStatBar stats={stats} accentColor="#1DA1F2" />
 
       {/* Bio */}
-      <p style={{ margin: '0 0 10px', fontSize: '0.85rem', color: '#334155', lineHeight: '1.4', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-        {bio}
-      </p>
+      {bio && (
+        <div style={{ marginBottom: 10, flexShrink: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: '0.82rem',
+              color: '#334155',
+              lineHeight: '1.45',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              display: '-webkit-box',
+              WebkitLineClamp: expandedBio ? 'none' : 2,
+              WebkitBoxOrient: 'vertical'
+            }}
+          >
+            {bio}
+          </p>
+          {bio.length > 80 && (
+            <button
+              onClick={() => setExpandedBio(!expandedBio)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#1DA1F2',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                padding: 0,
+                marginTop: 2
+              }}
+            >
+              {expandedBio ? 'Show Less ▲' : 'Read More ▼'}
+            </button>
+          )}
+        </div>
+      )}
 
-      {/* Recent Content */}
-      <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: 8 }}>
+      {/* Rich Content Section — Latest 3 Tweets */}
+      <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: 8, minHeight: 0 }}>
         {recentTweets.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {recentTweets.slice(0, 2).map((tweet, idx) => (
-              <a
-                key={tweet.id || idx}
-                href={tweet.contentUrl || tweet.postUrl || profileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ textDecoration: 'none', color: 'inherit', background: '#F8FAFC', padding: '6px 10px', borderRadius: 8, border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: 2 }}
-              >
-                <p style={{ margin: 0, fontSize: '0.78rem', color: '#334155', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                  {tweet.text || 'Tweet'}
-                </p>
-                <div style={{ display: 'flex', gap: 10, fontSize: '0.7rem', color: '#64748B', fontWeight: 600, marginTop: 2 }}>
-                  <span>❤️ {tweet.likesCount || 0}</span>
-                  <span>🔁 {tweet.sharesCount || 0}</span>
-                  <span>💬 {tweet.commentsCount || 0}</span>
-                  {tweet.publishedAt && <span>• {formatRelativeTime(tweet.publishedAt)}</span>}
-                </div>
-              </a>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {recentTweets.slice(0, 3).map((tweet, idx) => {
+              const isHovered = hoveredTweetIdx === idx;
+              const tweetText = tweet.text || tweet.caption || 'Tweet';
+              const likes = Number(tweet.likesCount || tweet.likes || tweet.likeCount || 0);
+              const retweets = Number(tweet.sharesCount || tweet.retweetsCount || tweet.retweetCount || 0);
+              const replies = Number(tweet.commentsCount || tweet.repliesCount || tweet.replyCount || 0);
+              const dateRaw = tweet.publishedAt || tweet.createdAt || tweet.date || '';
+              const dateStr = dateRaw ? formatRelativeTime(dateRaw) : '';
+              const targetUrl = tweet.contentUrl || tweet.postUrl || tweet.url || profileUrl;
+
+              return (
+                <a
+                  key={tweet.id || idx}
+                  href={targetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    textDecoration: 'none',
+                    color: 'inherit',
+                    background: '#FFFFFF',
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    border: '1px solid #E2E8F0',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    boxShadow: isHovered ? '0 6px 16px rgba(0,0,0,0.08)' : '0 2px 4px rgba(0,0,0,0.02)',
+                    borderColor: isHovered ? '#000000' : '#E2E8F0',
+                    transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
+                    transition: 'all 0.2s cubic-bezier(0.2, 0, 0, 1)',
+                    cursor: 'pointer'
+                  }}
+                  onMouseEnter={() => setHoveredTweetIdx(idx)}
+                  onMouseLeave={() => setHoveredTweetIdx(null)}
+                >
+                  {/* Small Tweet Author Row */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <SocialAvatar
+                      src={profileImage}
+                      name={displayName}
+                      platform="twitter"
+                      size={24}
+                      borderColor="#000000"
+                    />
+                    <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.78rem', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {displayName}
+                      </span>
+                      {dateStr && <span style={{ fontSize: '0.68rem', color: '#64748B', flexShrink: 0 }}>• {dateStr}</span>}
+                    </div>
+                  </div>
+
+                  {/* Tweet Body Text */}
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: '0.78rem',
+                      color: '#0F172A',
+                      lineHeight: '1.4',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      display: '-webkit-box',
+                      WebkitLineClamp: isHovered ? 5 : 2,
+                      WebkitBoxOrient: 'vertical',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    {tweetText}
+                  </p>
+
+                  {/* Metrics Bar */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: '0.72rem', color: '#64748B', fontWeight: 600, marginTop: 2 }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      💬 {formatStatCount(replies)}
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      🔁 {formatStatCount(retweets)}
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      ❤️ {formatStatCount(likes)}
+                    </span>
+                  </div>
+                </a>
+              );
+            })}
           </div>
         ) : (
-          <div style={{ padding: 10, background: '#F8FAFC', borderRadius: 8, border: '1px dashed #CBD5E1', textAlign: 'center', color: '#94A3B8', fontSize: '0.8rem' }}>
-            No recent tweets available.
-          </div>
+          <SocialEmptyState platform="twitter" />
         )}
       </div>
 
-      {/* Footer */}
+      {/* Footer Timestamp */}
       <SocialFooterBar lastFetched={lastFetched} isFailedScrape={isFailed} />
 
-      {/* Button */}
+      {/* Open Twitter / X CTA */}
       <a
         href={profileUrl}
         target="_blank"
@@ -95,14 +205,18 @@ export default function TwitterWidget({ block, socialProfile }) {
           background: '#000000',
           color: '#FFFFFF',
           textDecoration: 'none',
-          padding: '7px 12px',
-          borderRadius: 10,
+          padding: '8px 14px',
+          borderRadius: 12,
           fontWeight: 700,
-          fontSize: '0.82rem',
+          fontSize: '0.84rem',
           textAlign: 'center',
           marginTop: 6,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+          boxShadow: '0 3px 12px rgba(0,0,0,0.25)',
+          transition: 'transform 0.15s ease, boxShadow 0.15s ease',
+          flexShrink: 0
         }}
+        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
+        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
       >
         Open Twitter / X ↗
       </a>

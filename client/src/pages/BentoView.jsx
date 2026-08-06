@@ -1178,11 +1178,21 @@ export default function BentoView({ isPublic = false }) {
                   )}
 
                   {/* Social Cards */}
-                  {block.blockType === 'instagram' && <InstagramWidget block={block} socialProfile={block.socialProfile} />}
-                  {block.blockType === 'github' && <GitHubWidget block={block} socialProfile={block.socialProfile} />}
-                  {block.blockType === 'linkedin' && <LinkedInWidget block={block} socialProfile={block.socialProfile} />}
-                  {block.blockType === 'youtube' && <YouTubeWidget block={block} socialProfile={block.socialProfile} />}
-                  {block.blockType === 'twitter' && <TwitterWidget block={block} socialProfile={block.socialProfile} />}
+                  {(() => {
+                    const handle = block.configuration?.handle || block.configuration?.username || block.configuration?.title || '';
+                    const cacheKey = `${block.blockType}:${handle.toLowerCase().trim().replace(/^@/, '')}`;
+                    const effectiveSocialProfile = block.socialProfile || socialStats[cacheKey] || {};
+
+                    return (
+                      <>
+                        {block.blockType === 'instagram' && <InstagramWidget block={block} socialProfile={effectiveSocialProfile} />}
+                        {block.blockType === 'github' && <GitHubWidget block={block} socialProfile={effectiveSocialProfile} />}
+                        {block.blockType === 'linkedin' && <LinkedInWidget block={block} socialProfile={effectiveSocialProfile} />}
+                        {block.blockType === 'youtube' && <YouTubeWidget block={block} socialProfile={effectiveSocialProfile} />}
+                        {block.blockType === 'twitter' && <TwitterWidget block={block} socialProfile={effectiveSocialProfile} />}
+                      </>
+                    );
+                  })()}
 
                   {/* Resize Handles */}
                   {!isPublicView && !block.locked && (

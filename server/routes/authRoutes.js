@@ -34,7 +34,7 @@ router.post('/resend-verification', verificationLimiter, authController.resendVe
 router.post('/login', loginLimiter, validateLogin, authController.login);
 router.post('/refresh', refreshLimiter, authController.refresh);
 router.post('/logout', authController.logout);
-router.post('/logout-all', protect, authController.logoutAll);
+router.post('/logout-all', authController.logoutAll);
 
 // Password Reset
 router.post('/forgot-password', forgotPasswordLimiter, validateForgotPassword, authController.forgotPassword);

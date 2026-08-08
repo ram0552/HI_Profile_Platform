@@ -100,6 +100,34 @@ export const getInitials = (name = '') => {
   return parts[0].substring(0, 2).toUpperCase();
 };
 
+const API_BASE_URL = 'http://localhost:3001/api';
+
+/**
+ * Resolve and proxy social image URLs to bypass CORP/CORS/Referrer restrictions
+ */
+export const resolveSocialImageUrl = (url = '') => {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+
+  // Don't proxy if already proxied or data/blob URI
+  if (
+    trimmed.includes('/api/social/proxy') ||
+    trimmed.includes('/api/instagram/proxy') ||
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('blob:')
+  ) {
+    return trimmed;
+  }
+
+  // Proxy external HTTP/HTTPS image URLs (Instagram, Facebook CDN, etc.)
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return `${API_BASE_URL}/social/proxy?url=${encodeURIComponent(trimmed)}`;
+  }
+
+  return trimmed;
+};
+
 /**
  * Robustly extract recent posts / content array from any SocialProfile or block object
  * Searches all possible locations (MongoDB normalized, scraper rawData, nested profile objects)
@@ -113,27 +141,34 @@ export const extractRecentPosts = (sp = {}, block = {}) => {
     sp?.posts,
     sp?.videos,
     sp?.repositories,
+    sp?.latestPosts,
     sp?.profile?.recentPosts,
+    sp?.profile?.latestPosts,
     sp?.profile?.recentVideos,
     sp?.profile?.recentRepos,
     sp?.profile?.posts,
     sp?.rawData?.recentPosts,
+    sp?.rawData?.latestPosts,
     sp?.rawData?.recentVideos,
     sp?.rawData?.recentRepos,
     sp?.rawData?.posts,
     sp?.rawData?.videos,
     sp?.rawData?.repositories,
     sp?.rawData?.profile?.recentPosts,
+    sp?.rawData?.profile?.latestPosts,
     sp?.rawData?.profile?.recentVideos,
     sp?.rawData?.profile?.posts,
     sp?.rawData?.data?.recentPosts,
+    sp?.rawData?.data?.latestPosts,
     sp?.rawData?.data?.posts,
     sp?.data?.recentPosts,
+    sp?.data?.latestPosts,
     sp?.data?.posts,
     block?.socialProfile?.recentContent,
     block?.socialProfile?.recentPosts,
     block?.socialProfile?.posts,
     block?.socialProfile?.rawData?.recentPosts,
+    block?.socialProfile?.rawData?.latestPosts,
     block?.socialProfile?.rawData?.posts
   ];
 

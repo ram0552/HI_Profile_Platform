@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getInitials, getInitialsColor } from '../../utils/socialHelpers';
+import { getInitials, getInitialsColor, resolveSocialImageUrl } from '../../utils/socialHelpers';
 
 export default function SocialAvatar({
   src = '',
@@ -13,7 +13,8 @@ export default function SocialAvatar({
   const [error, setError] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
-  const cleanSrc = (src || '').trim();
+  const resolvedSrc = resolveSocialImageUrl(src);
+  const cleanSrc = (resolvedSrc || '').trim();
   const showFallback = !cleanSrc || error;
   const initials = getInitials(name);
   const bgColor = getInitialsColor(name, platform);

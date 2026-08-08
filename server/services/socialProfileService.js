@@ -8,7 +8,8 @@ const { getLinkedInProfile } = require('./linkedinService');
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 Hours Cache Expiration
 
 /**
- * Extract standardized recentContent array from platform scraper data
+ * Extract standardized recentContent array from platform scraper data.
+ * EXHAUSTIVE: persists every meaningful field from each platform's scraper output.
  */
 const extractNormalizedRecentContent = (platform, data = {}) => {
     const cleanPlatform = (platform || '').toLowerCase().trim();
@@ -18,10 +19,13 @@ const extractNormalizedRecentContent = (platform, data = {}) => {
         return posts.map(p => ({
             id: String(p.id || ''),
             caption: p.caption || '',
-            imageUrl: p.imageUrl || p.displayUrl || p.thumbnailUrl || '',
+            imageUrl: p.imageUrl || p.displayUrl || p.thumbnailUrl || p.thumbnail_src || '',
             contentUrl: p.postUrl || p.url || '',
             likesCount: Number(p.likesCount || p.likes_count || 0),
-            commentsCount: Number(p.commentsCount || p.comments_count || 0)
+            commentsCount: Number(p.commentsCount || p.comments_count || 0),
+            shortCode: p.shortCode || p.shortcode || '',
+            mediaType: p.mediaType || p.type || p.__typename || '',
+            publishedAt: p.timestamp || p.taken_at_timestamp || p.taken_at || ''
         }));
     }
 
@@ -44,10 +48,14 @@ const extractNormalizedRecentContent = (platform, data = {}) => {
         return posts.map(p => ({
             text: p.text || '',
             imageUrl: p.imageUrl || '',
+            thumbnailUrl: p.thumbnailUrl || p.imageUrl || '',
             contentUrl: p.postUrl || p.url || '',
             likesCount: Number(p.likesCount || 0),
             commentsCount: Number(p.commentsCount || 0),
             sharesCount: Number(p.sharesCount || 0),
+            postType: p.postType || '',
+            articleTitle: p.articleTitle || '',
+            articleUrl: p.articleUrl || '',
             publishedAt: p.createdAt || ''
         }));
     }
@@ -57,8 +65,13 @@ const extractNormalizedRecentContent = (platform, data = {}) => {
         return videos.map(v => ({
             title: v.title || '',
             imageUrl: v.thumbnailUrl || '',
+            thumbnailUrl: v.thumbnailUrl || '',
             contentUrl: v.url || '',
             viewsCount: Number(v.viewCount || 0),
+            likesCount: Number(v.likeCount || 0),
+            commentsCount: Number(v.commentCount || 0),
+            duration: v.duration || '',
+            description: v.description || '',
             publishedAt: v.uploadedAt || v.date || ''
         }));
     }
@@ -73,6 +86,7 @@ const extractNormalizedRecentContent = (platform, data = {}) => {
             likesCount: Number(t.likesCount || t.likeCount || 0),
             sharesCount: Number(t.retweetsCount || t.retweetCount || 0),
             commentsCount: Number(t.repliesCount || t.replyCount || 0),
+            repliesCount: Number(t.repliesCount || t.replyCount || 0),
             publishedAt: t.createdAt || ''
         }));
     }
@@ -104,6 +118,36 @@ const fetchPlatformData = async (platform, username) => {
 };
 
 /**
+ * Build platform-specific enrichment fields for the SocialProfile document.
+ * These are top-level fields that vary by platform.
+ */
+const extractPlatformEnrichment = (platform, data = {}) => {
+    const cleanPlatform = (platform || '').toLowerCase().trim();
+    const profileObj = data.profile || data;
+    const enrichment = {};
+
+    if (cleanPlatform === 'linkedin') {
+        enrichment.currentTitle = profileObj.currentTitle || data.currentTitle || '';
+        enrichment.currentCompany = profileObj.currentCompany || data.currentCompany || '';
+        enrichment.bio = profileObj.bio || data.bio || '';
+        enrichment.connectionsCount = Number(profileObj.connectionsCount || data.connectionsCount || 0);
+    }
+
+    if (cleanPlatform === 'youtube') {
+        enrichment.subscribersCount = Number(data.subscribersCount || 0);
+        enrichment.videoCount = Number(data.videoCount || 0);
+        enrichment.viewCount = Number(data.viewCount || 0);
+    }
+
+    if (cleanPlatform === 'github') {
+        enrichment.reposCount = Number(data.reposCount || data.publicRepos || 0);
+        enrichment.bio = data.bio || '';
+    }
+
+    return enrichment;
+};
+
+/**
  * Background async refresh of SocialProfile document
  */
 const refreshSocialProfileAsync = async (socialProfileId) => {
@@ -115,9 +159,24 @@ const refreshSocialProfileAsync = async (socialProfileId) => {
         const data = await fetchPlatformData(socialProfile.platform, socialProfile.username);
 
         const profileObj = data.profile || data;
+        const extractedProfileImage =
+            data.profileImage ||
+            profileObj.profilePicture ||
+            data.profilePicture ||
+            profileObj.profileImage ||
+            data.avatarUrl ||
+            profileObj.avatarUrl ||
+            profileObj.profilePicUrl ||
+            data.profilePicUrl ||
+            profileObj.pictureUrl ||
+            data.pictureUrl ||
+            profileObj.displayPictureUrl ||
+            data.displayPictureUrl ||
+            '';
 
         socialProfile.displayName = data.displayName || profileObj.fullName || data.fullName || data.name || socialProfile.username;
-        socialProfile.profileImage = data.profileImage || profileObj.profilePicture || data.profilePicture || data.avatarUrl || '';
+        // Never overwrite a valid existing profile image with an empty string
+        socialProfile.profileImage = extractedProfileImage || socialProfile.profileImage || '';
         socialProfile.headline = profileObj.headline || data.headline || '';
         socialProfile.location = profileObj.location || data.location || '';
         socialProfile.verified = Boolean(data.verified || profileObj.verified);
@@ -130,6 +189,10 @@ const refreshSocialProfileAsync = async (socialProfileId) => {
         socialProfile.rawData = data;
         socialProfile.lastFetched = new Date();
         socialProfile.lastUpdated = new Date();
+
+        // Apply platform-specific enrichment fields
+        const enrichment = extractPlatformEnrichment(socialProfile.platform, data);
+        Object.assign(socialProfile, enrichment);
 
         await socialProfile.save();
         console.log(`[Background Refresh] Successfully updated ${socialProfile.platform}:${socialProfile.username} in MongoDB.`);
@@ -172,12 +235,35 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
         }
     }
 
-    // 3. Cache Miss or Force Refresh -> Fetch from Apify
+    // 3. Cache Miss or Force Refresh -> Fetch from Apify with resilient fallback
     console.log(`[MongoDB Social Cache] MISS for ${cleanPlatform}:${cleanUsername}. Calling Apify service...`);
-    const data = await fetchPlatformData(cleanPlatform, cleanUsername);
+    let data = {};
+    let isApifySuccess = false;
+
+    try {
+        data = await fetchPlatformData(cleanPlatform, cleanUsername);
+        isApifySuccess = true;
+    } catch (apifyErr) {
+        console.warn(`[Apify Fetch Warning] ${cleanPlatform}:${cleanUsername} failed (${apifyErr.message}). Creating fallback SocialProfile document...`);
+    }
+
     const profileObj = data.profile || data;
 
     const recentContent = extractNormalizedRecentContent(cleanPlatform, data);
+    const extractedProfileImage =
+        data.profileImage ||
+        profileObj.profilePicture ||
+        data.profilePicture ||
+        profileObj.profileImage ||
+        data.avatarUrl ||
+        profileObj.avatarUrl ||
+        profileObj.profilePicUrl ||
+        data.profilePicUrl ||
+        profileObj.pictureUrl ||
+        data.pictureUrl ||
+        profileObj.displayPictureUrl ||
+        data.displayPictureUrl ||
+        '';
 
     const payload = {
         userId,
@@ -185,7 +271,8 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
         platform: cleanPlatform,
         username: cleanUsername,
         displayName: data.displayName || profileObj.fullName || data.fullName || data.name || cleanUsername,
-        profileImage: data.profileImage || profileObj.profilePicture || data.profilePicture || data.avatarUrl || '',
+        // Never overwrite a valid existing profile image with an empty string
+        profileImage: extractedProfileImage || socialProfile?.profileImage || '',
         headline: profileObj.headline || data.headline || '',
         location: profileObj.location || data.location || '',
         verified: Boolean(data.verified || profileObj.verified),
@@ -195,9 +282,11 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
         description: data.description || profileObj.bio || data.bio || data.biography || '',
         profileUrl: data.profileUrl || profileObj.profileUrl || `https://${cleanPlatform}.com/${cleanUsername}`,
         recentContent,
-        rawData: data,
-        lastFetched: new Date(),
-        lastUpdated: new Date()
+        rawData: isApifySuccess ? data : null,
+        lastFetched: isApifySuccess ? new Date() : new Date(0), // Set to epoch on error so background refresh will retry later
+        lastUpdated: new Date(),
+        // Apply platform-specific enrichment fields
+        ...extractPlatformEnrichment(cleanPlatform, data)
     };
 
     if (socialProfile) {

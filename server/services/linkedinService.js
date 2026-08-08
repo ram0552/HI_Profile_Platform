@@ -82,15 +82,32 @@ const getLinkedInProfile = async (rawUsername) => {
     }
 
     const fullName = profileObj.fullName || `${profileObj.firstName || ''} ${profileObj.lastName || ''}`.trim() || username;
-    const profilePicture = profileObj.profilePictureUrl || '';
+    const profilePicture =
+        profileObj.profilePictureUrl ||
+        (typeof profileObj.profilePicture === 'string' ? profileObj.profilePicture : profileObj.profilePicture?.url) ||
+        profileObj.displayPictureUrl ||
+        profileObj.profilePicUrl ||
+        profileObj.avatarUrl ||
+        profileObj.pictureUrl ||
+        profileObj.photoUrl ||
+        profileObj.imageUrl ||
+        profileObj.profile_picture_url ||
+        profileObj.profile_picture ||
+        profileObj.profile_pic_url ||
+        profileObj.image ||
+        profileObj.avatar ||
+        '';
     const headline = profileObj.headline || '';
     const currentTitle = profileObj.currentTitle || '';
     const currentCompany = profileObj.currentCompanyName || '';
-    const location = profileObj.locationFull || profileObj.city || '';
-    const bio = profileObj.summary || '';
-    const followersCount = profileObj.followerCount || 0;
-    const connectionsCount = profileObj.connectionsCount || 0;
+    const location = profileObj.locationFull || profileObj.city || profileObj.location || '';
+    const bio = profileObj.summary || profileObj.about || '';
+    const followersCount = profileObj.followerCount || profileObj.followersCount || 0;
+    const connectionsCount = profileObj.connectionsCount || profileObj.connections || 0;
     const profileUrl = profileObj.profileUrl || `https://www.linkedin.com/in/${username}`;
+    const website = profileObj.websiteUrl || profileObj.website || '';
+    const education = Array.isArray(profileObj.education) ? profileObj.education : [];
+    const certifications = Array.isArray(profileObj.certifications) ? profileObj.certifications : [];
 
     // Extract real posts from the actor response
     // The dataset contains individual post items directly, e.g. [post1, post2, ...]
@@ -110,15 +127,24 @@ const getLinkedInProfile = async (rawUsername) => {
         return tsB - tsA;
     });
 
-    // Map the latest 3 posts with correct field extraction
+    // Map the latest 3 posts with correct field extraction and enriched metadata
     const recentPosts = rawPosts
         .slice(0, 3)
         .map(post => {
+            // Detect post type
+            let postType = 'text';
+            if (post.article) postType = 'article';
+            else if (post.document) postType = 'document';
+            else if (post.media && Array.isArray(post.media.images) && post.media.images.length > 0) postType = 'image';
+            else if (post.media && post.media.type === 'video') postType = 'video';
+
             // Extract the best preview image from various media types
             let previewImage = '';
+            let allMediaImages = [];
             if (post.media) {
                 if (Array.isArray(post.media.images) && post.media.images.length > 0) {
                     previewImage = post.media.images[0].url || post.media.url || '';
+                    allMediaImages = post.media.images.map(img => img.url || img.src || '').filter(Boolean);
                 } else {
                     previewImage = post.media.thumbnail || post.media.url || '';
                 }
@@ -130,14 +156,33 @@ const getLinkedInProfile = async (rawUsername) => {
                 previewImage = post.document.thumbnail;
             }
 
+            // Extract article metadata
+            const articleTitle = post.article?.title || '';
+            const articleUrl = post.article?.url || post.article?.link || '';
+
+            // Extract document metadata
+            const documentTitle = post.document?.title || '';
+
+            // Extract hashtags from post text
+            const postText = post.text || '';
+            const hashtagMatches = postText.match(/#[\w\u00C0-\u024F]+/g);
+            const hashtags = hashtagMatches ? hashtagMatches.map(h => h.replace('#', '')) : [];
+
             return {
-                text: post.text || '',
+                text: postText,
                 imageUrl: previewImage,
-                likesCount: post.stats?.total_reactions || 0,
+                thumbnailUrl: previewImage,
+                allMediaImages: allMediaImages,
+                likesCount: post.stats?.total_reactions || post.stats?.likes || 0,
                 commentsCount: post.stats?.comments || 0,
                 sharesCount: post.stats?.reposts || 0,
                 postUrl: post.url || '',
-                createdAt: post.posted_at?.date || post.posted_at?.relative || ''
+                createdAt: post.posted_at?.date || post.posted_at?.relative || '',
+                postType: postType,
+                articleTitle: articleTitle || documentTitle,
+                articleUrl: articleUrl,
+                hashtags: hashtags,
+                impressions: post.stats?.impressions || 0
             };
         });
 
@@ -155,6 +200,7 @@ const getLinkedInProfile = async (rawUsername) => {
         profile: {
             fullName,
             profilePicture,
+            profileImage: profilePicture,
             headline,
             currentTitle,
             currentCompany,
@@ -163,6 +209,9 @@ const getLinkedInProfile = async (rawUsername) => {
             followersCount,
             connectionsCount,
             profileUrl,
+            website,
+            education,
+            certifications,
             recentPosts
         }
     };

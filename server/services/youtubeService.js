@@ -70,8 +70,10 @@ const getYouTubeProfile = async (usernameOrChannelId) => {
     const videoCount = firstItem.channelTotalVideos || 0;
     const viewCount = firstItem.channelTotalViews || 0;
     const channelUrl = firstItem.channelUrl || targetUrl;
+    const channelJoinedDate = firstItem.channelJoinedDate || firstItem.channelCreatedDate || '';
+    const channelCountry = firstItem.channelCountry || firstItem.channelLocation || '';
 
-    // Filter and map the latest 3 videos
+    // Filter and map the latest 3 videos with exhaustive metadata
     const videos = items
         .filter(item => item.type === 'video' && item.title)
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
@@ -81,7 +83,12 @@ const getYouTubeProfile = async (usernameOrChannelId) => {
             thumbnailUrl: video.thumbnailUrl || '',
             url: video.url || '',
             viewCount: video.viewCount || 0,
-            uploadedAt: video.date || ''
+            likeCount: video.likes || video.likeCount || 0,
+            commentCount: video.commentsCount || video.commentCount || 0,
+            duration: video.duration || '',
+            uploadedAt: video.date || '',
+            channelName: video.channelName || channelName,
+            description: video.text || video.description || ''
         }));
 
     const cleanUsername = usernameOrChannelId.replace(/^@/, '');
@@ -102,6 +109,8 @@ const getYouTubeProfile = async (usernameOrChannelId) => {
         subscribersCount: subscribersCount,
         videoCount: videoCount,
         viewCount: viewCount,
+        channelJoinedDate: channelJoinedDate,
+        channelCountry: channelCountry,
         recentVideos: videos
     };
 };

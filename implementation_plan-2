@@ -1,0 +1,315 @@
+# Complete Social Profile Data Pipeline — Apify → MongoDB → Bento UI
+
+Redesign the data normalization layer so that **100% of useful data returned by Apify scrapers** is persisted into MongoDB and made available to the frontend. Currently, scraper services extract only a subset of available fields, and the `extractNormalizedRecentContent` function in `socialProfileService.js` discards additional metadata.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **No new API endpoints or services** will be created. All changes are within the existing architecture:
+> - `server/services/*Service.js` — Expand field extraction from Apify raw data
+> - `server/services/socialProfileService.js` — Expand normalization to persist all extracted fields
+> - `server/models/SocialProfile.js` — Expand `recentContentSchema` with new optional fields
+> - Frontend widget components — Already resilient via `extractRecentPosts()` helper; no changes needed
+
+> [!WARNING]
+> **Existing MongoDB documents will NOT be automatically updated.** After deploying these changes, each social profile must be either force-refreshed (edit the block's handle and save) or will update naturally when the 24-hour TTL cache expires. No data migration script is needed — old documents remain valid since all new fields have defaults.
+
+## Open Questions
+
+> [!IMPORTANT]
+> **Instagram `latestPosts` field completeness**: The Apify `apify/instagram-profile-scraper` actor's response schema varies by version and account privacy settings. The current implementation accesses `item.latestPosts` or `item.posts`. Are you aware of any specific Instagram fields being returned that are not captured? If you have sample Apify output, please share it so the field mapping can be 100% precise.
+
+> [!NOTE]
+> **LinkedIn dual-actor approach**: The current implementation calls **two separate Apify actors** in parallel — one for profile data (`linkedintel-core/linkedin-profile-scraper-no-cookies`) and another for posts (`apimaestro/linkedin-profile-posts`). This is already well-structured. The plan preserves this architecture and expands field extraction from both actors' responses.
+
+---
+
+## Current State Analysis
+
+### Data Flow Architecture
+
+```mermaid
+flowchart LR
+    A["Frontend Widget"] -->|"GET /api/social/:platform/:handle"| B["socialRoutes.js"]
+    B -->|"calls"| C["*Service.js\n(Apify Scraper)"]
+    C -->|"raw Apify JSON"| B
+    B -->|"proxy images + cache"| A
+    
+    D["blockController.js"] -->|"createBlock / updateBlock"| E["socialProfileService.js"]
+    E -->|"calls"| C
+    E -->|"normalize + persist"| F["MongoDB\nSocialProfile"]
+    D -->|"getUserBlocks / getPublicBlocks\njoins block + socialProfile"| A
+```
+
+### Two Parallel Data Paths (Current)
+
+The frontend receives social data from **two separate paths**, and both must be exhaustive:
+
+| Path | Route | Description | Storage |
+|------|-------|-------------|---------|
+| **Path A** | `GET /api/social/:platform/:handle` | Direct Apify → in-memory cache → JSON response | 30-min in-memory `Map` in `socialRoutes.js` |
+| **Path B** | `getOrFetchSocialProfile()` | Apify → normalize → MongoDB `SocialProfile` document | MongoDB (24h TTL) |
+
+**Path A** feeds `socialStats[cacheKey]` in the frontend.
+**Path B** feeds `block.socialProfile` when blocks are loaded from MongoDB via `blockController.js`.
+
+> [!CAUTION]
+> **Both paths must return the same shape of data.** Currently Path A returns the raw scraper service output (with `recentPosts`, `recentRepos`, `recentVideos`, etc.), while Path B returns the MongoDB `SocialProfile` document (with `recentContent`). The frontend `extractRecentPosts()` helper already searches both shapes, so this works — but the MongoDB path is currently losing data because `extractNormalizedRecentContent` drops fields.
+
+---
+
+## Proposed Changes
+
+### 1. MongoDB Schema — Expand `recentContentSchema`
+
+#### [MODIFY] [SocialProfile.js](file:///d:/MERN2/Hi-Profile-main/server/models/SocialProfile.js)
+
+Add new optional fields to `recentContentSchema` to capture metadata currently being discarded:
+
+```diff
+ const recentContentSchema = new mongoose.Schema({
+     id: { type: String, default: '' },
+     title: { type: String, default: '', trim: true },
+     text: { type: String, default: '', trim: true },
+     caption: { type: String, default: '', trim: true },
+     imageUrl: { type: String, default: '', trim: true },
+     contentUrl: { type: String, default: '', trim: true },
+     likesCount: { type: Number, default: 0 },
+     commentsCount: { type: Number, default: 0 },
+     sharesCount: { type: Number, default: 0 },
+     viewsCount: { type: Number, default: 0 },
+     stars: { type: Number, default: 0 },
+     forks: { type: Number, default: 0 },
+     language: { type: String, default: '', trim: true },
+-    publishedAt: { type: String, default: '', trim: true }
++    publishedAt: { type: String, default: '', trim: true },
++    // Instagram-specific
++    shortCode: { type: String, default: '', trim: true },
++    mediaType: { type: String, default: '', trim: true },
++    // LinkedIn-specific
++    postType: { type: String, default: '', trim: true },
++    articleTitle: { type: String, default: '', trim: true },
++    articleUrl: { type: String, default: '', trim: true },
++    // Twitter-specific
++    repliesCount: { type: Number, default: 0 },
++    // YouTube-specific
++    duration: { type: String, default: '', trim: true },
++    // GitHub-specific
++    description: { type: String, default: '', trim: true },
++    // General
++    thumbnailUrl: { type: String, default: '', trim: true }
+ }, { _id: false });
+```
+
+Add new top-level profile fields to `socialProfileSchema`:
+
+```diff
+ const socialProfileSchema = new mongoose.Schema({
+     ...existing fields...,
++    currentTitle: { type: String, default: '', trim: true },
++    currentCompany: { type: String, default: '', trim: true },
++    bio: { type: String, default: '', trim: true },
++    connectionsCount: { type: Number, default: 0 },
++    videoCount: { type: Number, default: 0 },
++    viewCount: { type: Number, default: 0 },
++    subscribersCount: { type: Number, default: 0 },
++    reposCount: { type: Number, default: 0 },
+     rawData: { type: mongoose.Schema.Types.Mixed, default: null },
+     ...
+ });
+```
+
+---
+
+### 2. Instagram Scraper — Expand Field Extraction
+
+#### [MODIFY] [instagramService.js](file:///d:/MERN2/Hi-Profile-main/server/services/instagramService.js)
+
+Expand `recentPosts` mapping to capture all available post metadata:
+
+- Add `shortCode` / `shortcode` extraction
+- Add `mediaType` (e.g. `Image`, `Video`, `Carousel`)  
+- Add `timestamp` / `taken_at_timestamp` for precise dating
+- Add `videoUrl` if media type is video
+- Extract `isVerified` from profile data
+- Extract `externalUrl` (link in bio)
+
+---
+
+### 3. LinkedIn Scraper — Expand Field Extraction
+
+#### [MODIFY] [linkedinService.js](file:///d:/MERN2/Hi-Profile-main/server/services/linkedinService.js)
+
+Expand post mapping to capture additional metadata from the `apimaestro/linkedin-profile-posts` actor:
+
+- Add `postType` detection (text, article, document, image, video)
+- Add `article.title` and `article.url` for article-type posts
+- Add `document.title` for document carousel posts
+- Capture all `stats` sub-fields (impressions if available)
+- Add `hashtags` extraction from post text
+- Preserve `media.images` array (multiple images per post)
+
+Expand profile mapping to capture additional fields from the profile actor:
+
+- Add `education`, `certifications` (if returned by actor)
+- Add `currentTitle`, `currentCompany` directly
+
+---
+
+### 4. GitHub Scraper — Expand Field Extraction
+
+#### [MODIFY] [githubService.js](file:///d:/MERN2/Hi-Profile-main/server/services/githubService.js)
+
+Expand repository mapping:
+
+- Add `topics` / `tags` array
+- Add `license` information
+- Add `openIssues` count
+- Add `isForked` boolean
+- Add `createdAt` timestamp
+- Extract `company`, `location`, `website` from user profile
+
+---
+
+### 5. Twitter Scraper — Expand Field Extraction
+
+#### [MODIFY] [twitterService.js](file:///d:/MERN2/Hi-Profile-main/server/services/twitterService.js)
+
+Expand tweet mapping:
+
+- Add `quoteCount` / `bookmarkCount` (if available from actor)
+- Add `isRetweet` boolean
+- Add `hashtags` extraction  
+- Add all `mediaUrls` (not just the first one)
+- Capture `location` from profile
+
+---
+
+### 6. YouTube Scraper — Expand Field Extraction
+
+#### [MODIFY] [youtubeService.js](file:///d:/MERN2/Hi-Profile-main/server/services/youtubeService.js)
+
+Expand video mapping:
+
+- Add `duration` string
+- Add `likeCount` (if available from actor)
+- Add `commentCount` (if available from actor)
+- Capture `channelJoinedDate`, `channelCountry` from profile data
+
+---
+
+### 7. Social Profile Service — Exhaustive Normalization
+
+#### [MODIFY] [socialProfileService.js](file:///d:/MERN2/Hi-Profile-main/server/services/socialProfileService.js)
+
+This is the **most critical change**. Overhaul `extractNormalizedRecentContent` to persist every field now being extracted by the expanded scrapers:
+
+**Instagram normalization**:
+```js
+return posts.map(p => ({
+    id: String(p.id || ''),
+    caption: p.caption || '',
+    imageUrl: p.imageUrl || p.displayUrl || p.thumbnailUrl || '',
+    contentUrl: p.postUrl || p.url || '',
+    likesCount: Number(p.likesCount || 0),
+    commentsCount: Number(p.commentsCount || 0),
+    shortCode: p.shortCode || p.shortcode || '',
+    mediaType: p.mediaType || p.type || '',
+    publishedAt: p.timestamp || p.createdAt || ''
+}));
+```
+
+**LinkedIn normalization**:
+```js
+return posts.map(p => ({
+    text: p.text || '',
+    imageUrl: p.imageUrl || '',
+    thumbnailUrl: p.thumbnailUrl || '',
+    contentUrl: p.postUrl || p.url || '',
+    likesCount: Number(p.likesCount || 0),
+    commentsCount: Number(p.commentsCount || 0),
+    sharesCount: Number(p.sharesCount || 0),
+    postType: p.postType || '',
+    articleTitle: p.articleTitle || '',
+    articleUrl: p.articleUrl || '',
+    publishedAt: p.createdAt || ''
+}));
+```
+
+**Twitter normalization**:
+```js
+return tweets.map(t => ({
+    id: String(t.id || ''),
+    text: t.text || '',
+    imageUrl: t.imageUrl || '',
+    contentUrl: t.postUrl || t.url || '',
+    likesCount: Number(t.likesCount || 0),
+    sharesCount: Number(t.retweetsCount || 0),
+    commentsCount: Number(t.repliesCount || 0),
+    repliesCount: Number(t.repliesCount || 0),
+    publishedAt: t.createdAt || ''
+}));
+```
+
+**YouTube normalization**:
+```js
+return videos.map(v => ({
+    title: v.title || '',
+    imageUrl: v.thumbnailUrl || '',
+    thumbnailUrl: v.thumbnailUrl || '',
+    contentUrl: v.url || '',
+    viewsCount: Number(v.viewCount || 0),
+    likesCount: Number(v.likeCount || 0),
+    commentsCount: Number(v.commentCount || 0),
+    duration: v.duration || '',
+    publishedAt: v.uploadedAt || v.date || ''
+}));
+```
+
+**GitHub normalization**:
+```js
+return repos.map(r => ({
+    title: r.name || '',
+    description: r.description || '',
+    language: r.language || '',
+    stars: Number(r.stars || 0),
+    forks: Number(r.forks || 0),
+    contentUrl: r.url || '',
+    publishedAt: r.updatedAt || ''
+}));
+```
+
+Also expand the top-level field persistence in `refreshSocialProfileAsync` and `getOrFetchSocialProfile`:
+
+- Add `currentTitle`, `currentCompany`, `bio`, `connectionsCount` for LinkedIn
+- Add `videoCount`, `viewCount`, `subscribersCount` for YouTube
+- Add `reposCount` for GitHub
+
+---
+
+## Summary of Files Modified
+
+| File | Scope | Risk |
+|------|-------|------|
+| [SocialProfile.js](file:///d:/MERN2/Hi-Profile-main/server/models/SocialProfile.js) | Add optional fields to schema | Low — all new fields have defaults |
+| [instagramService.js](file:///d:/MERN2/Hi-Profile-main/server/services/instagramService.js) | Extract more fields from Apify response | Low — additive only |
+| [linkedinService.js](file:///d:/MERN2/Hi-Profile-main/server/services/linkedinService.js) | Extract more fields from Apify response | Low — additive only |
+| [githubService.js](file:///d:/MERN2/Hi-Profile-main/server/services/githubService.js) | Extract more fields from Apify/GitHub API response | Low — additive only |
+| [twitterService.js](file:///d:/MERN2/Hi-Profile-main/server/services/twitterService.js) | Extract more fields from Apify response | Low — additive only |
+| [youtubeService.js](file:///d:/MERN2/Hi-Profile-main/server/services/youtubeService.js) | Extract more fields from Apify response | Low — additive only |
+| [socialProfileService.js](file:///d:/MERN2/Hi-Profile-main/server/services/socialProfileService.js) | Expand normalization + top-level persistence | Medium — core pipeline logic |
+
+## Verification Plan
+
+### Automated Tests
+- `npm run build` (client) — Verify no frontend breakage
+- Server startup verification — Ensure the expanded Mongoose schema loads without errors
+
+### Manual Verification
+1. **Force-refresh an existing social block** (edit handle → save → re-edit to original handle → save) and verify:
+   - `SocialProfile.rawData` contains full scraper output
+   - `SocialProfile.recentContent` array items now contain the new fields
+   - Frontend widget still renders correctly with the enriched data
+2. **Create a new social block** for each platform and verify MongoDB documents contain all expanded fields
+3. **Inspect browser console** `[*Widget Debug]` logs to confirm `recentPosts` array contains enriched objects
+4. **Verify backward compatibility** — Old `SocialProfile` documents (before this change) still render correctly without errors

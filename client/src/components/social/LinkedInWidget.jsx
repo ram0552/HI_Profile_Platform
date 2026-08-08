@@ -7,7 +7,7 @@ import SocialImage from './SocialImage';
 import SocialSkeleton from './SocialSkeleton';
 import SocialEmptyState from './SocialEmptyState';
 import SocialErrorState from './SocialErrorState';
-import { isLikelyFailedScrape, formatRelativeTime, formatStatCount, extractRecentPosts } from '../../utils/socialHelpers';
+import { isLikelyFailedScrape, formatRelativeTime, formatStatCount, extractRecentPosts, resolveSocialImageUrl } from '../../utils/socialHelpers';
 
 export default function LinkedInWidget({ block, socialProfile, loading = false, error = null, onRetry }) {
   const [expandedBio, setExpandedBio] = useState(false);
@@ -25,7 +25,21 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
 
   const username = sp.username || config.username || config.handle || 'user';
   const displayName = sp.displayName || username;
-  const profileImage = sp.profileImage || '';
+
+  // Exhaustive Profile Picture candidate mapping priority
+  const profileImage =
+    sp.profileImage ||
+    sp.profilePicture ||
+    sp.profilePictureUrl ||
+    sp.avatar ||
+    sp.avatarUrl ||
+    sp.profile?.profilePicture ||
+    sp.profile?.profileImage ||
+    sp.rawData?.profilePicture ||
+    sp.rawData?.profilePicUrl ||
+    sp.rawData?.avatarUrl ||
+    '';
+
   const headline = sp.headline || sp.description || '';
   const location = sp.location || '';
   const followers = sp.followers !== undefined ? sp.followers : 0;
@@ -38,16 +52,16 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
   // Extract recent posts using universal candidate resolution
   const recentPosts = extractRecentPosts(sp, block);
 
-  // Development debugging log to trace data pipeline
+  // Debug logging at every stage
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`[LinkedInWidget Debug] handle: "${username}", posts found: ${recentPosts.length}`, {
-        sp,
-        block,
-        recentPosts
-      });
+      console.log("Raw Apify Profile / sp:", sp);
+      console.log("Mapped Profile Image:", profileImage);
+      console.log("MongoDB Profile Image:", sp.profileImage);
+      console.log("Frontend Image:", profileImage);
+      console.log("Resolved Image Source:", resolveSocialImageUrl(profileImage));
     }
-  }, [username, sp, block, recentPosts]);
+  }, [username, sp, block, recentPosts, profileImage]);
 
   const stats = [
     { label: 'Followers', value: followers },
@@ -141,7 +155,9 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
                   href={targetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  className="bento-reveal-item"
                   style={{
+                    '--reveal-index': idx,
                     textDecoration: 'none',
                     color: 'inherit',
                     background: '#FFFFFF',

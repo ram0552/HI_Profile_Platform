@@ -132,7 +132,9 @@ export default function GitHubWidget({ block, socialProfile, loading = false, er
                   href={repoUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  className="bento-reveal-item"
                   style={{
+                    '--reveal-index': idx,
                     textDecoration: 'none',
                     color: 'inherit',
                     background: '#FFFFFF',

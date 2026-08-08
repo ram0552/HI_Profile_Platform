@@ -46,39 +46,42 @@ function AvatarDisplay({ avatar, profileImage }) {
   return <div style={{ fontSize: '3rem', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#E0E7FF', color: '#4F46E5', fontWeight: 'bold' }}>👤</div>
 }
 
-// Skeleton Loader for Bento Page
+// Skeleton Loader for Bento Page with Progressive Assembly Animation
 function BentoSkeleton() {
   return (
     <div style={{ minHeight: '100vh', background: '#F8FAFC', paddingBottom: 60, fontFamily: 'Inter, sans-serif' }}>
       <header style={{ height: 70, borderBottom: '1px solid #E2E8F0', background: '#FFFFFF', padding: '0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ width: 120, height: 28, background: '#E2E8F0', borderRadius: 6, animation: 'pulse 1.5s infinite' }} />
-        <div style={{ width: 100, height: 36, background: '#E2E8F0', borderRadius: 8, animation: 'pulse 1.5s infinite' }} />
+        <div className="bento-skeleton-item" style={{ width: 120, height: 28, borderRadius: 8 }} />
+        <div className="bento-skeleton-item" style={{ width: 100, height: 36, borderRadius: 10 }} />
       </header>
 
       <main style={{ maxWidth: 1080, margin: '40px auto 0', padding: '0 24px' }}>
-        <div style={{ background: '#FFFFFF', borderRadius: 20, padding: 32, border: '1px solid #E2E8F0', display: 'flex', gap: 24, marginBottom: 32, alignItems: 'center' }}>
-          <div style={{ width: 96, height: 96, borderRadius: '50%', background: '#E2E8F0', flexShrink: 0, animation: 'pulse 1.5s infinite' }} />
+        <div style={{ background: '#FFFFFF', borderRadius: 22, padding: 32, border: '1px solid #E2E8F0', display: 'flex', gap: 24, marginBottom: 32, alignItems: 'center', boxShadow: '0 4px 20px rgba(0,0,0,0.03)' }}>
+          <div className="bento-skeleton-item" style={{ width: 96, height: 96, borderRadius: '50%', flexShrink: 0 }} />
           <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ width: 220, height: 28, background: '#E2E8F0', borderRadius: 6, animation: 'pulse 1.5s infinite' }} />
-            <div style={{ width: 140, height: 16, background: '#E2E8F0', borderRadius: 4, animation: 'pulse 1.5s infinite' }} />
-            <div style={{ width: 340, height: 16, background: '#E2E8F0', borderRadius: 4, animation: 'pulse 1.5s infinite' }} />
+            <div className="bento-skeleton-item" style={{ width: 220, height: 28, borderRadius: 8 }} />
+            <div className="bento-skeleton-item" style={{ width: 140, height: 16, borderRadius: 6 }} />
+            <div className="bento-skeleton-item" style={{ width: 340, height: 16, borderRadius: 6 }} />
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24 }}>
-          {[1, 2, 3, 4, 5, 6].map(i => (
-            <div key={i} style={{ gridColumn: i % 2 === 0 ? 'span 2' : 'span 1', height: 160, background: '#FFFFFF', borderRadius: 18, border: '1px solid #E2E8F0', padding: 20, animation: 'pulse 1.5s infinite' }} />
+          {[1, 2, 3, 4, 5, 6].map((i, idx) => (
+            <div
+              key={i}
+              className="bento-skeleton-item"
+              style={{
+                gridColumn: i % 3 === 0 ? 'span 2' : 'span 1',
+                height: i % 2 === 0 ? 344 : 160,
+                borderRadius: 22,
+                border: '1px solid #E2E8F0',
+                padding: 20,
+                animationDelay: `${idx * 80}ms`
+              }}
+            />
           ))}
         </div>
       </main>
-
-      <style>{`
-        @keyframes pulse {
-          0% { opacity: 0.6; }
-          50% { opacity: 1; }
-          100% { opacity: 0.6; }
-        }
-      `}</style>
     </div>
   );
 }
@@ -839,26 +842,107 @@ export default function BentoView({ isPublic = false }) {
       {/* Main Profile Container */}
       <main style={{ maxWidth: 1080, margin: '40px auto 0', padding: '0 24px' }}>
         
-        {/* Profile Card Header */}
-        <section style={{ background: '#FFFFFF', borderRadius: 20, padding: 32, border: '1px solid #E2E8F0', boxShadow: '0 4px 20px rgba(0,0,0,0.03)', display: 'flex', alignItems: 'center', gap: 24, marginBottom: 32 }}>
-          <div style={{ width: 96, height: 96, borderRadius: '50%', border: '3px solid #EEF2FF', overflow: 'hidden', flexShrink: 0, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-            <AvatarDisplay avatar={profileObj?.avatar} profileImage={profileObj?.profileImage} />
-          </div>
+        {/* Profile Card Header — Centered Hero Layout */}
+        <section
+          className="bento-hero-header"
+          style={{
+            position: 'relative',
+            background: '#FFFFFF',
+            borderRadius: 28,
+            padding: '48px 32px 40px',
+            border: '1px solid #E2E8F0',
+            boxShadow: '0 10px 30px -5px rgba(15, 23, 42, 0.05), 0 4px 12px -2px rgba(15, 23, 42, 0.03)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            textAlign: 'center',
+            marginBottom: 36,
+            overflow: 'hidden'
+          }}
+        >
+          {/* Floating Add Block Button in Top-Right Corner */}
+          
 
-          <div style={{ flexGrow: 1 }}>
-            <h1 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 800, color: '#0F172A' }}>{name}</h1>
-            <p style={{ margin: '4px 0 12px', fontSize: '0.95rem', color: '#64748B', fontWeight: 500 }}>@{profileObj.username || targetUsername}</p>
-            {bio && <p style={{ margin: 0, fontSize: '1rem', color: '#334155', lineHeight: '1.5', maxWidth: 600 }}>{bio}</p>}
-          </div>
-
-          {!isPublicView && (
-            <button
-              onClick={() => setIsPickerOpen(true)}
-              style={{ background: '#EEF2FF', color: '#4F46E5', border: 'none', padding: '12px 24px', borderRadius: 12, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer', flexShrink: 0 }}
+          {/* Centered Large Profile Avatar Ring */}
+          <div
+            className="bento-avatar-wrapper"
+            style={{
+              position: 'relative',
+              width: 160,
+              height: 160,
+              borderRadius: '50%',
+              padding: 4,
+              background: 'linear-gradient(135deg, #6366F1 0%, #A855F7 50%, #EC4899 100%)',
+              boxShadow: '0 12px 32px -4px rgba(99, 102, 241, 0.3)',
+              marginBottom: 20,
+              flexShrink: 0
+            }}
+          >
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                borderRadius: '50%',
+                border: '4px solid #FFFFFF',
+                overflow: 'hidden',
+                background: '#F8FAFC',
+                boxSizing: 'border-box',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
             >
-              + Add Block
-            </button>
-          )}
+              <AvatarDisplay avatar={profileObj?.avatar} profileImage={profileObj?.profileImage} />
+            </div>
+
+            {/* Online Status Badge Indicator */}
+            <div
+              title="Online"
+              style={{
+                position: 'absolute',
+                bottom: 8,
+                right: 8,
+                width: 22,
+                height: 22,
+                borderRadius: '50%',
+                background: '#10B981',
+                border: '3.5px solid #FFFFFF',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                zIndex: 5
+              }}
+            />
+          </div>
+
+          {/* Centered User Info Hierarchy */}
+          <div className="bento-hero-text" style={{ maxWidth: 640, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <h1 style={{ margin: 0, fontSize: '2.1rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+              {name}
+            </h1>
+
+            <p style={{ margin: '6px 0 12px', fontSize: '1rem', color: '#6366F1', fontWeight: 700, letterSpacing: '0.01em' }}>
+              @{profileObj.username || targetUsername}
+            </p>
+
+            {bio && (
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: '1.02rem',
+                  color: '#475569',
+                  lineHeight: '1.6',
+                  maxWidth: 580,
+                  fontWeight: 500,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: 'vertical'
+                }}
+              >
+                {bio}
+              </p>
+            )}
+          </div>
         </section>
 
         {/* Bento Grid */}
@@ -917,7 +1001,7 @@ export default function BentoView({ isPublic = false }) {
               )}
             </div>
           ) : (
-            gridBlocks.map((block) => {
+            gridBlocks.map((block, idx) => {
               const gap = 24;
               const colWidth = containerWidth > 0 ? (containerWidth + gap) / GRID_COLUMNS : 240;
               const rowHeight = 160 + gap;
@@ -934,23 +1018,22 @@ export default function BentoView({ isPublic = false }) {
               return (
                 <div
                   key={block.id}
-                  className={`bento-block-card ${isDragging ? 'is-dragging' : ''}`}
+                  className={`bento-block-card ${isDragging ? 'is-dragging' : ''} ${isSelected ? 'is-selected' : ''}`}
                   onDoubleClick={(e) => handleBlockDoubleClick(e, block)}
                   onPointerDown={(e) => handlePointerDownBlock(e, block)}
                   onPointerMove={(e) => handlePointerMoveBlock(e, block.id)}
                   onPointerUp={(e) => handlePointerUpBlock(e, block.id)}
                   style={{
+                    '--bento-stagger-index': idx,
                     position: 'absolute',
                     left: `${left}px`,
                     top: `${top}px`,
                     width: `${width}px`,
                     height: `${height}px`,
                     background: config.bg || '#FFFFFF',
-                    borderRadius: 18,
+                    borderRadius: 22,
                     border: isSelected ? '2px solid #4F46E5' : '1px solid #E2E8F0',
-                    boxShadow: isDragging ? '0 20px 35px rgba(0,0,0,0.15)' : (isSelected ? '0 8px 24px rgba(79,70,229,0.15)' : '0 4px 12px rgba(0,0,0,0.03)'),
-                    zIndex: isDragging ? 50 : (isSelected ? 10 : 1),
-                    transition: isDragging ? 'none' : 'left 0.25s cubic-bezier(0.2,0,0,1), top 0.25s cubic-bezier(0.2,0,0,1), width 0.25s, height 0.25s',
+                    zIndex: isDragging ? 100 : (isSelected ? 20 : 1),
                     padding: 20,
                     boxSizing: 'border-box',
                     display: 'flex',
@@ -1103,7 +1186,7 @@ export default function BentoView({ isPublic = false }) {
                   {/* Emoji Card */}
                   {block.blockType === 'emoji' && (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                      <span style={{ fontSize: '3.5rem', lineHeight: 1 }}>{config.emoji || '😊'}</span>
+                      <span className="bento-emoji-display" style={{ fontSize: '3.5rem', lineHeight: 1, display: 'inline-block' }}>{config.emoji || '😊'}</span>
                       {config.title && <span style={{ marginTop: 8, fontWeight: 700, fontSize: '0.9rem', color: '#334155' }}>{config.title}</span>}
                     </div>
                   )}
@@ -1124,7 +1207,7 @@ export default function BentoView({ isPublic = false }) {
                         <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '80%' }}>
                           {config.url}
                         </span>
-                        <span>↗</span>
+                        <span className="bento-link-arrow" style={{ display: 'inline-block', fontSize: '1rem', fontWeight: 800 }}>↗</span>
                       </div>
                     </a>
                   )}
@@ -1143,19 +1226,19 @@ export default function BentoView({ isPublic = false }) {
                   {block.blockType === 'checklist' && (
                     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                       <h4 style={{ margin: '0 0 12px', fontWeight: 700, fontSize: '1.05rem', color: '#0F172A' }}>{config.title || 'Checklist'}</h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', flexGrow: 1 }}>
-                        {(config.items || []).map((item, idx) => {
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', flexGrow: 1 }}>
+                        {(config.items || []).map((item, itemIdx) => {
                           const itemText = typeof item === 'string' ? item : item.text;
                           const isCompleted = typeof item === 'object' && item.completed;
                           return (
-                            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div key={itemIdx} className="bento-checklist-item" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                               <input
                                 type="checkbox"
                                 checked={isCompleted}
-                                onChange={() => handleToggleCheckitem(block, idx)}
+                                onChange={() => handleToggleCheckitem(block, itemIdx)}
                                 style={{ width: 18, height: 18, accentColor: '#4F46E5', cursor: 'pointer' }}
                               />
-                              <span style={{ fontSize: '0.9rem', color: isCompleted ? '#94A3B8' : '#334155', textDecoration: isCompleted ? 'line-through' : 'none' }}>
+                              <span style={{ fontSize: '0.9rem', color: isCompleted ? '#94A3B8' : '#334155', textDecoration: isCompleted ? 'line-through' : 'none', transition: 'all 0.2s ease' }}>
                                 {itemText}
                               </span>
                             </div>
@@ -1167,10 +1250,10 @@ export default function BentoView({ isPublic = false }) {
 
                   {/* Image Card */}
                   {block.blockType === 'image' && (
-                    <div style={{ width: '100%', height: '100%', borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
-                      <img src={config.imageUrl || config.image} alt={config.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <div style={{ width: '100%', height: '100%', borderRadius: 16, overflow: 'hidden', position: 'relative', background: '#F1F5F9' }}>
+                      <img src={config.imageUrl || config.image} alt={config.title || 'Bento Image'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       {config.title && (
-                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.6)', color: '#FFF', padding: '6px 12px', fontSize: '0.85rem', fontWeight: 600 }}>
+                        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(to top, rgba(15,23,42,0.85), transparent)', color: '#FFF', padding: '16px 12px 10px', fontSize: '0.88rem', fontWeight: 700, backdropFilter: 'blur(4px)' }}>
                           {config.title}
                         </div>
                       )}

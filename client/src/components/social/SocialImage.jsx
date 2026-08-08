@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { resolveSocialImageUrl } from '../../utils/socialHelpers';
 
 /**
  * Image component with lazy loading, skeleton placeholder, and fallback handling
@@ -7,7 +8,9 @@ export default function SocialImage({ src, alt = '', className = '', style = {},
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
 
-  if (!src || error) {
+  const resolvedSrc = resolveSocialImageUrl(src);
+
+  if (!resolvedSrc || error) {
     return (
       <div
         className={className}
@@ -42,7 +45,7 @@ export default function SocialImage({ src, alt = '', className = '', style = {},
         />
       )}
       <img
-        src={src}
+        src={resolvedSrc}
         alt={alt}
         loading="lazy"
         onLoad={() => setLoaded(true)}

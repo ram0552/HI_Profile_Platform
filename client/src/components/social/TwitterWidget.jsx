@@ -114,7 +114,9 @@ export default function TwitterWidget({ block, socialProfile, loading = false, e
                   href={targetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  className="bento-reveal-item"
                   style={{
+                    '--reveal-index': idx,
                     textDecoration: 'none',
                     color: 'inherit',
                     background: '#FFFFFF',

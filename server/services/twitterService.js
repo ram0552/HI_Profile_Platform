@@ -79,26 +79,40 @@ const getTwitterProfile = async (rawUsername) => {
 
     const displayName = profileObj.name || profileObj.username || username;
     const profilePicture = profileObj.profilePicture || '';
-    const bio = profileObj.bio || '';
+    const bio = profileObj.bio || profileObj.description || '';
     const followersCount = profileObj.followers || 0;
     const followingCount = profileObj.following || 0;
     const postCount = profileObj.tweetsCount || 0;
+    const location = profileObj.location || '';
+    const isVerified = Boolean(profileObj.isVerified || profileObj.verified || profileObj.isBlueVerified);
+    const website = profileObj.website || profileObj.url || '';
+    const joinedDate = profileObj.joined || profileObj.createdAt || '';
 
-    // Filter and map the latest 3 tweets
+    // Filter and map the latest 3 tweets with exhaustive metadata
     const tweets = (tweetItems || [])
         .slice(0, 3)
         .map(tweet => {
-            let mediaUrl = '';
-            if (Array.isArray(tweet.mediaUrls) && tweet.mediaUrls.length > 0) {
-                mediaUrl = tweet.mediaUrls[0];
-            }
+            // Collect all media URLs, not just the first
+            const allMediaUrls = Array.isArray(tweet.mediaUrls) ? tweet.mediaUrls : [];
+            const primaryMediaUrl = allMediaUrls.length > 0 ? allMediaUrls[0] : '';
+
+            // Extract hashtags from tweet text
+            const tweetText = tweet.text || '';
+            const hashtagMatches = tweetText.match(/#[\w]+/g);
+            const hashtags = hashtagMatches ? hashtagMatches.map(h => h.replace('#', '')) : [];
+
             return {
                 id: tweet.id,
-                text: tweet.text || '',
-                imageUrl: mediaUrl,
+                text: tweetText,
+                imageUrl: primaryMediaUrl,
+                allMediaUrls: allMediaUrls,
                 likesCount: tweet.likeCount || 0,
                 repliesCount: tweet.replyCount || 0,
                 retweetsCount: tweet.retweetCount || 0,
+                quoteCount: tweet.quoteCount || 0,
+                bookmarkCount: tweet.bookmarkCount || 0,
+                isRetweet: Boolean(tweet.isRetweet),
+                hashtags: hashtags,
                 postUrl: tweet.url || `https://x.com/${username}/status/${tweet.id}`,
                 createdAt: tweet.createdAt || ''
             };
@@ -120,6 +134,10 @@ const getTwitterProfile = async (rawUsername) => {
         followersCount: followersCount,
         followingCount: followingCount,
         postCount: postCount,
+        location: location,
+        verified: isVerified,
+        website: website,
+        joinedDate: joinedDate,
         recentPosts: tweets
     };
 };

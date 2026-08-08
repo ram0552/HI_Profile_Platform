@@ -6,7 +6,7 @@ import SocialImage from './SocialImage';
 import SocialSkeleton from './SocialSkeleton';
 import SocialEmptyState from './SocialEmptyState';
 import SocialErrorState from './SocialErrorState';
-import { isLikelyFailedScrape, formatRelativeTime, formatStatCount, extractRecentPosts } from '../../utils/socialHelpers';
+import { isLikelyFailedScrape, formatRelativeTime, formatStatCount, extractRecentPosts, resolveSocialImageUrl } from '../../utils/socialHelpers';
 
 export default function InstagramWidget({ block, socialProfile, loading = false, error = null, onRetry }) {
   const [expandedBio, setExpandedBio] = useState(false);
@@ -23,7 +23,23 @@ export default function InstagramWidget({ block, socialProfile, loading = false,
 
   const username = sp.username || config.username || config.handle || 'user';
   const displayName = sp.displayName || username;
-  const profileImage = sp.profileImage || '';
+
+  // Exhaustive Profile Picture mapping priority
+  const profileImage =
+    sp.profileImage ||
+    sp.profilePicture ||
+    sp.profilePictureUrl ||
+    sp.avatar ||
+    sp.avatarUrl ||
+    sp.profile_pic_url ||
+    sp.profile?.profilePicture ||
+    sp.profile?.profileImage ||
+    sp.rawData?.profilePicUrl ||
+    sp.rawData?.profilePicUrlHD ||
+    sp.rawData?.profile_pic_url ||
+    sp.rawData?.profilePicture ||
+    '';
+
   const verified = sp.verified || false;
   const location = sp.location || '';
   const headline = sp.headline || '';
@@ -41,13 +57,19 @@ export default function InstagramWidget({ block, socialProfile, loading = false,
   // Development debugging log to trace data pipeline
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`[InstagramWidget Debug] handle: "${username}", posts found: ${recentPosts.length}`, {
-        sp,
-        block,
-        recentPosts
-      });
+      console.log("Instagram API Response", sp);
+      console.log("Profile Image", profileImage);
+      console.log("Recent Posts", recentPosts);
+      console.log("Rendered Profile Image", resolveSocialImageUrl(profileImage));
+      if (recentPosts.length > 0) {
+        recentPosts.forEach((post, i) => {
+          const rawImg = post.imageUrl || post.displayUrl || post.thumbnailUrl || post.display_url || post.thumbnail_src || post.image || post.mediaUrl || post.url || post.src || '';
+          console.log(`Rendered Post Image [${i}]`, rawImg);
+          console.log(`Final Image Source [${i}]`, resolveSocialImageUrl(rawImg));
+        });
+      }
     }
-  }, [username, sp, block, recentPosts]);
+  }, [username, sp, block, recentPosts, profileImage]);
 
   const stats = [
     { label: 'Followers', value: followers },
@@ -114,7 +136,22 @@ export default function InstagramWidget({ block, socialProfile, loading = false,
         {recentPosts.length > 0 ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, width: '100%' }}>
             {recentPosts.slice(0, 6).map((post, idx) => {
-              const rawImg = post.imageUrl || post.displayUrl || post.thumbnailUrl || post.image || post.mediaUrl || post.url || post.display_url || post.thumbnail_src || post.src || '';
+              // Exhaustive image source resolution order: imageUrl -> thumbnailUrl -> displayUrl -> display_url -> thumbnail_src -> media[0].url -> images[0]
+              const rawImg =
+                post.imageUrl ||
+                post.thumbnailUrl ||
+                post.displayUrl ||
+                post.display_url ||
+                post.thumbnail_src ||
+                post.image ||
+                post.mediaUrl ||
+                post.url ||
+                post.src ||
+                post.node?.display_url ||
+                post.node?.thumbnail_src ||
+                (Array.isArray(post.images) && post.images[0]) ||
+                (post.media && Array.isArray(post.media) && post.media[0]?.url) ||
+                '';
               const postCaption = post.caption || post.text || post.title || post.captionText || post.alt || '';
               const postLikes = Number(post.likesCount || post.likes || post.likes_count || post.like_count || 0);
               const postComments = Number(post.commentsCount || post.comments || post.comments_count || post.comment_count || 0);
@@ -129,6 +166,7 @@ export default function InstagramWidget({ block, socialProfile, loading = false,
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
+                    '--reveal-index': idx,
                     textDecoration: 'none',
                     color: 'inherit',
                     display: 'block',
@@ -140,7 +178,7 @@ export default function InstagramWidget({ block, socialProfile, loading = false,
                     boxShadow: '0 2px 6px rgba(0,0,0,0.04)',
                     cursor: 'pointer'
                   }}
-                  className="instagram-post-card"
+                  className="instagram-post-card bento-reveal-item"
                 >
                   <SocialImage
                     src={rawImg}

@@ -37,21 +37,30 @@ const getInstagramProfile = async (username) => {
     const item = items[0];
     const rawProfilePic = item.profilePicUrl || item.profilePicUrlHD || item.profilePicUrlHR || item.profile_pic_url || '';
 
-    const recentPosts = (item.latestPosts || item.posts || []).slice(0, 3).map(post => {
-        const rawImg = post.displayUrl || post.display_url || post.imageUrl || post.thumbnailUrl || '';
+    const recentPosts = (item.latestPosts || item.posts || []).slice(0, 6).map(post => {
+        const rawImg = post.displayUrl || post.display_url || post.imageUrl || post.thumbnailUrl || post.thumbnail_src || '';
+        const sc = post.shortCode || post.shortcode || '';
         return {
-            id: post.id || post.shortCode || post.shortcode,
+            id: post.id || sc,
+            shortCode: sc,
             imageUrl: rawImg,
             caption: post.caption || '',
-            postUrl: post.url || (post.shortCode || post.shortcode ? `https://www.instagram.com/p/${post.shortCode || post.shortcode}/` : ''),
+            postUrl: post.url || (sc ? `https://www.instagram.com/p/${sc}/` : ''),
             likesCount: post.likesCount || post.likes_count || 0,
-            commentsCount: post.commentsCount || post.comments_count || 0
+            commentsCount: post.commentsCount || post.comments_count || 0,
+            mediaType: post.type || post.mediaType || post.__typename || '',
+            timestamp: post.timestamp || post.taken_at_timestamp || post.taken_at || '',
+            videoUrl: post.videoUrl || post.video_url || '',
+            videoDuration: post.videoDuration || post.video_duration || 0,
+            videoViewCount: post.videoViewCount || post.video_view_count || 0
         };
     });
 
     const followers = item.followersCount || item.followers_count || 0;
     const following = item.followsCount || item.followingCount || item.following_count || 0;
     const posts = item.postsCount || item.posts_count || 0;
+    const isVerified = Boolean(item.verified || item.isVerified || item.is_verified);
+    const externalUrl = item.externalUrl || item.external_url || item.website || '';
 
     return {
         platform: 'instagram',
@@ -61,6 +70,7 @@ const getInstagramProfile = async (username) => {
         followers,
         following,
         posts,
+        verified: isVerified,
         description: item.biography || item.bio || '',
         profileUrl: `https://www.instagram.com/${normalizedUsername}/`,
         fullName: item.fullName || item.full_name || item.username || normalizedUsername,
@@ -69,6 +79,9 @@ const getInstagramProfile = async (username) => {
         followersCount: followers,
         followingCount: following,
         postsCount: posts,
+        externalUrl: externalUrl,
+        isBusinessAccount: Boolean(item.isBusinessAccount || item.is_business_account),
+        categoryName: item.categoryName || item.category_name || '',
         recentPosts
     };
 };

@@ -1,0 +1,80 @@
+# Implementation Plan — Master Data Model Refactoring (Eliminate Inconsistencies & Duplication)
+
+Refactor the Hi-Profile data model and API payload layer to remove duplicate fields, repeated attributes, inconsistent naming conventions, and redundant nesting while establishing a single source of truth for every logical field.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **No Breaking Changes**: All raw provider responses (`rawData`) remain 100% untouched. Legacy field getters are provided on Mongoose schemas to ensure full backward compatibility with any existing MongoDB documents.
+
+> [!NOTE]
+> **Canonical Field Names**:
+> - `profileImage` (replaces `profilePicture`, `avatarUrl`, `profilePicUrl`, `pictureUrl`)
+> - `displayName` (replaces `fullName`, `channelName`, `name`)
+> - `description` (replaces `bio`, `biography`, `summary`)
+> - `followers` (consolidates `followersCount`, `subscribersCount`, `connectionsCount`)
+> - `following` (consolidates `followingCount`)
+> - `posts` (consolidates `postsCount`, `postCount`, `reposCount`, `videoCount`)
+> - `recentContent` (single normalized array replacing `recentPosts`, `recentRepos`, `recentVideos`, `tweets`)
+
+## Proposed Changes
+
+### Server Models
+
+#### [MODIFY] [SocialProfile.js](file:///d:/MERN2/Hi-Profile-main/server/models/SocialProfile.js)
+- Clean up schema fields to enforce canonical single source of truth fields (`displayName`, `profileImage`, `followers`, `following`, `posts`, `description`, `recentContent`).
+- Deprecate duplicate root fields (`subscribersCount`, `videoCount`, `reposCount`, `connectionsCount`, `bio`) and convert them to Mongoose virtual getters referencing canonical fields (`followers`, `posts`, `description`).
+- Maintain `rawData` field completely intact.
+
+---
+
+### Server Services
+
+#### [MODIFY] [socialProfileService.js](file:///d:/MERN2/Hi-Profile-main/server/services/socialProfileService.js)
+- Normalize extraction logic in `getOrFetchSocialProfile` and `refreshSocialProfileAsync` to populate canonical fields cleanly.
+- Eliminate duplicated payload assignments before saving to MongoDB.
+
+#### [MODIFY] [githubService.js](file:///d:/MERN2/Hi-Profile-main/server/services/githubService.js)
+- Remove duplicate output fields (`avatarUrl`, `name`, `bio`, `followersCount`, `followingCount`, `reposCount`).
+- Return clean normalized object (`profileImage`, `displayName`, `description`, `followers`, `following`, `posts`, `recentRepos`).
+
+#### [MODIFY] [instagramService.js](file:///d:/MERN2/Hi-Profile-main/server/services/instagramService.js)
+- Remove duplicate output fields (`profilePicture`, `fullName`, `biography`, `followersCount`, `followingCount`, `postsCount`).
+- Return clean normalized object (`profileImage`, `displayName`, `description`, `followers`, `following`, `posts`, `recentPosts`).
+
+#### [MODIFY] [youtubeService.js](file:///d:/MERN2/Hi-Profile-main/server/services/youtubeService.js)
+- Remove duplicate output fields (`profilePicture`, `subscribersCount`, `videoCount`).
+- Return clean normalized object (`profileImage`, `displayName`, `description`, `followers`, `posts`, `recentVideos`).
+
+#### [MODIFY] [twitterService.js](file:///d:/MERN2/Hi-Profile-main/server/services/twitterService.js)
+- Remove duplicate output fields (`profilePicture`, `bio`, `followersCount`, `followingCount`, `postCount`).
+- Return clean normalized object (`profileImage`, `displayName`, `description`, `followers`, `following`, `posts`, `recentPosts`).
+
+#### [MODIFY] [linkedinService.js](file:///d:/MERN2/Hi-Profile-main/server/services/linkedinService.js)
+- Eliminate redundant nested `profile` wrapper object that duplicated top-level fields.
+- Return clean normalized object (`profileImage`, `displayName`, `description`, `followers`, `following`, `posts`, `recentPosts`).
+
+---
+
+### Client Utilities & Social Components
+
+#### [MODIFY] [socialHelpers.js](file:///d:/MERN2/Hi-Profile-main/client/src/utils/socialHelpers.js)
+- Simplify `extractRecentPosts` to prioritize canonical `sp.recentContent` array while maintaining fallback safety for legacy cached data.
+- Enforce canonical `sp.profileImage` resolution.
+
+#### [MODIFY] [InstagramWidget.jsx](file:///d:/MERN2/Hi-Profile-main/client/src/components/social/InstagramWidget.jsx)
+#### [MODIFY] [GitHubWidget.jsx](file:///d:/MERN2/Hi-Profile-main/client/src/components/social/GitHubWidget.jsx)
+#### [MODIFY] [LinkedInWidget.jsx](file:///d:/MERN2/Hi-Profile-main/client/src/components/social/LinkedInWidget.jsx)
+#### [MODIFY] [TwitterWidget.jsx](file:///d:/MERN2/Hi-Profile-main/client/src/components/social/TwitterWidget.jsx)
+#### [MODIFY] [YouTubeWidget.jsx](file:///d:/MERN2/Hi-Profile-main/client/src/components/social/YouTubeWidget.jsx)
+- Clean up property references to use canonical fields (`sp.profileImage`, `sp.displayName`, `sp.followers`, `sp.following`, `sp.posts`, `sp.description`) without redundant 10-level fallback checks.
+
+## Verification Plan
+
+### Automated Tests
+- Run `npm run build` in `client/` directory to verify zero TypeScript/JSX syntax errors.
+- Run tests / server checks to ensure MongoDB models load without schema conflicts.
+
+### Manual Verification
+- Verify profile block fetching and live social stats rendering in Bento View for Instagram, GitHub, LinkedIn, Twitter, and YouTube.
+- Confirm raw provider responses (`rawData`) remain completely untouched.

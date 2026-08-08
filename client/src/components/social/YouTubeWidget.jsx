@@ -109,7 +109,9 @@ export default function YouTubeWidget({ block, socialProfile, loading = false, e
                   href={videoUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  className="bento-reveal-item"
                   style={{
+                    '--reveal-index': idx,
                     textDecoration: 'none',
                     color: 'inherit',
                     background: '#FFFFFF',

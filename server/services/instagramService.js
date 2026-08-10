@@ -44,6 +44,7 @@ const getInstagramProfile = async (username) => {
             id: post.id || sc,
             shortCode: sc,
             imageUrl: rawImg,
+            thumbnailUrl: post.thumbnailUrl || post.thumbnail_src || rawImg,
             caption: post.caption || '',
             postUrl: post.url || (sc ? `https://www.instagram.com/p/${sc}/` : ''),
             likesCount: post.likesCount || post.likes_count || 0,

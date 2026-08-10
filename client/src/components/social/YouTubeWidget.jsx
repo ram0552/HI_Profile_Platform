@@ -226,13 +226,15 @@ export default function YouTubeWidget({ block, socialProfile, loading = false, e
 
       {/* Open YouTube CTA */}
       <a
-        href={profileUrl}
+        href={profileUrl.startsWith('http') ? profileUrl : `https://${profileUrl}`}
         target="_blank"
         rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
         style={{
           display: 'flex',
           alignItems: 'center',
-          justify: 'center',
+          justifyContent: 'center',
           gap: 6,
           background: '#FF0000',
           color: '#FFFFFF',
@@ -245,7 +247,8 @@ export default function YouTubeWidget({ block, socialProfile, loading = false, e
           marginTop: 6,
           boxShadow: '0 3px 12px rgba(255,0,0,0.25)',
           transition: 'transform 0.15s ease, boxShadow 0.15s ease',
-          flexShrink: 0
+          flexShrink: 0,
+          cursor: 'pointer'
         }}
         onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
         onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}

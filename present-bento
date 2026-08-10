@@ -1,0 +1,507 @@
+# MASTER SPECIFICATION: BENTO BLOCK UI/UX BEHAVIOR & INTERACTION SPECIFICATION
+
+> **Repository Analysis Source:** `d:\MERN2\Hi-Profile`  
+> **Key Implementation Components:** `BentoView.jsx`, `global.css`, `layoutController.js`, `OnboardingContext.jsx`, `SocialIcons.jsx`  
+> **Target Audience:** Frontend Engineers, React Developers, UI/UX Architects recreating the exact Bento grid experience.
+
+---
+
+# 1. PRIMARY OBJECTIVE & ARCHITECTURAL PHILOSOPHY
+
+This document provides a **complete, repository-derived behavioral and architectural specification** of the Bento block editor implemented in this repository. 
+
+The Bento experience in this repository is built as a **declarative, mathematical 4-column absolute-positioning grid builder** with continuous pointer-based drag-and-drop, dynamic 4-axis handle resizing, collision detection with pushing physics, optional upward gravity compaction, and real-time social widget loading.
+
+---
+
+# 2. BENTO ARCHITECTURE MAP
+
+## File Hierarchy & Responsibilities
+
+```text
+Page (BentoView.jsx)
+ ↓
+Header Navbar (Save, Reset Layout, Dashboard, Share)
+ ↓
+Profile Details Header Card (AvatarDisplay, Name, Bio)
+ ↓
+Canvas & Dynamic Height Grid (bento-content-container / bento-grid-layout-new)
+ ↓
+Grid Background Placeholders (bento-grid-background & bento-grid-cell-placeholder)
+ ↓
+Drag/Resize Ghost Preview (bento-grid-preview-placeholder & bento-grid-preview-inner)
+ ↓
+Block Base Card Wrappers (bento-card-base)
+ ├── Drag Handles (Pointer capture on card body)
+ ├── Hover Action Overlay (Delete Button & Edit Button)
+ └── Resize Handles (4 Edges: Top, Right, Bottom, Left)
+ ↓
+Individual Card Widgets (Location, GitHub, Image, Behance, YouTube, Custom Emoji, Custom Text, Custom Link, Custom Checklist, Instagram, Twitter/X, LinkedIn, Dribbble)
+ ↓
+Interactive Modal Overlays (bento-dialog-overlay / bento-dialog-card)
+ ↓
+State Persistence Layer (fetchLayout / saveLayout via layoutController.js + OnboardingContext)
+```
+
+### Detailed Component File Map
+
+1. **`client/src/pages/BentoView.jsx`**
+   - **Responsibility:** Primary page component. Manages grid state (`gridBlocks`), layout modes (`freeGridMode`), drag state (`potentialDrag`, `activeDrag`), resize state (`activeResize`), mathematical calculations, pointer listeners, dialog modals, and rendering of all 13 card types.
+   - **Key Functions:** `placeBlocks()`, `collides()`, `resolveLayout()`, `handlePointerDownBlock()`, `handlePointerMoveBlock()`, `handlePointerUpBlock()`, `handlePointerDownResize()`, `handlePointerMoveResize()`, `handlePointerUpResize()`, `handleManualSaveLayout()`, `handleResetToDefaultLayout()`.
+
+2. **`client/src/styles/global.css`**
+   - **Responsibility:** Implements design tokens, absolute positioning transition curves, hover delays, handle animations, skeleton shimmer animations, theme mode variables (`.dark-mode-active`), and media query responsiveness.
+   - **Key Rules:** `.bento-card-base`, `.bento-card-base.dragging`, `.bento-card-base.resizing`, `.bento-card-resize-handle`, `.bento-grid-preview-placeholder`, `.bento-insta-shimmer`, `@media (max-width: 900px)`, `@media (max-width: 600px)`.
+
+3. **`client/src/components/SocialIcons.jsx`**
+   - **Responsibility:** Provides brand icons (SVG), brand colors, and domain detection utilities (`getSocialIcon`, `getSocialBrandColor`, `detectPlatformFromUrl`).
+
+4. **`client/src/context/OnboardingContext.jsx`**
+   - **Responsibility:** Global profile state (`theme`, `avatar`, `profileName`, `profileBio`, `location`, `socialLinks`, `profileCardFont`).
+
+5. **`server/controllers/layoutController.js`** & **`server/controllers/bentoController.js`**
+   - **Responsibility:** MongoDB layout persistence (`/layouts/me`, `/layouts`), auto-populating social profile blocks from `socialLinks`, layout schema transformation.
+
+---
+
+# 3. BENTO CANVAS & POSITIONING MODEL
+
+## Canvas Structure & Dimensions
+* **Container Element:** `.bento-content-container`
+* **Maximum Width:** Centered container with max-width derived from parent layout (`max-width: 1200px` on desktop).
+* **Grid Spacing (Gap):** Controlled by `gridSpacing` state.
+  * **Normal Spacing:** `24px` (`gap = 24`)
+  * **Compact Spacing:** `12px` (`gap = 12`)
+* **Background:** Light mode: `#F8FAFC` / `#FFFFFF`. Dark mode: `#0F172A` / `#1E293B`.
+* **Grid Background:** Renders a 4-column matrix of dotted grid cell placeholders (`.bento-grid-cell-placeholder`).
+* **Dynamic Canvas Height:** Height is calculated programmatically based on the maximum row occupied by any block or active drag preview:
+  ```javascript
+  const DEFAULT_GRID_ROWS = 2;
+  const activePreviewRow = (dragPreview || resizePreview) ? (dragPreview || resizePreview).y + (dragPreview || resizePreview).h : 0;
+  const maxPopulatedRow = Math.max(
+    0,
+    activePreviewRow,
+    ...(renderableBlocks.length > 0 ? renderableBlocks.map(b => (b.y || 0) + (b.h || 1)) : [0])
+  );
+  const totalGridRows = Math.max(DEFAULT_GRID_ROWS, maxPopulatedRow);
+  const rowHeight = 160 + gap;
+  const gridHeight = totalGridRows * rowHeight - gap;
+  const totalContainerHeight = Math.max(0, gridHeight) + 16 + 90 + 24; // accommodates bottom add button
+  ```
+
+## Position Engine
+The canvas uses **Absolute Coordinate Positioning** calculated via JavaScript. Each block maintains discrete grid coordinates `{ x, y, w, h }`:
+* `x`: Column index (`0` to `3`)
+* `y`: Row index (`0` to `infinity`)
+* `w`: Column span (`1` to `4`)
+* `h`: Row span (`1` to `N`, default `1` or `2`)
+
+---
+
+# 4. MATHEMATICAL GRID MODEL
+
+## Coordinate Calculations
+
+Given dynamic container width `containerWidth` measured via `ResizeObserver`:
+
+```javascript
+const colWidth = (containerWidth + gap) / 4;
+const rowHeight = 160 + gap; // Base cell height is 160px
+```
+
+### Absolute Metric Calculations for a Block `{ x, y, w, h }`:
+```javascript
+let left   = x * colWidth;
+let top    = y * rowHeight;
+let width  = w * colWidth - gap;
+let height = h * rowHeight - gap;
+```
+
+### Reverse Snapping Formulas (Pixel → Grid Units):
+```javascript
+// Horizontal snapping (clamped within 0 and 4 - w)
+let snapX = Math.round(currentLeft / colWidth);
+snapX = Math.max(0, Math.min(4 - block.w, snapX));
+
+// Vertical snapping (clamped >= 0)
+let snapY = Math.max(0, Math.round(currentTop / rowHeight));
+
+// Width snapping during horizontal resize
+let snapW = Math.round((currentWidth + gap) / colWidth);
+snapW = Math.max(1, Math.min(4 - block.x, snapW));
+
+// Height snapping during vertical resize
+let snapH = Math.round((currentHeight + gap) / rowHeight);
+snapH = Math.max(1, snapH);
+```
+
+---
+
+# 5. SPATIAL REFLOW & COLLISION ENGINE
+
+The repository implements a 2D bounding box collision detection engine with interactive block pushing and upward gravity compaction.
+
+## Bounding Box Collision (`collides`)
+```javascript
+const collides = (b1, b2) => {
+  if (b1.id === b2.id) return false;
+  return (
+    b1.x < b2.x + b2.w &&
+    b1.x + b1.w > b2.x &&
+    b1.y < b2.y + b2.h &&
+    b1.y + b1.h > b2.y
+  );
+};
+```
+
+## Layout Resolution Engine (`resolveLayout`)
+When a block moves or resizes, `resolveLayout(blocks, movingBlock, applyGravity)` resolves collisions:
+
+```text
+Step 1: Sort all blocks by Y ascending, then X ascending.
+Step 2: Reserve the position of movingBlock in the resolved list.
+Step 3: Iterate through sorted non-moving blocks.
+        If a block collides with any already-placed block in resolved, increment block.y by 1 
+        repeatedly until no collision remains.
+Step 4: If applyGravity (Auto-Compact Mode) is TRUE:
+        Iterate sorted resolved blocks from top to bottom.
+        Attempt to decrement targetBlock.y by 1 recursively until a collision occurs, 
+        then step back down by 1.
+```
+
+---
+
+# 6. DEFAULT BLOCK CREATION & LIFECYCLE
+
+## Block Placement Algorithm (`placeBlocks`)
+When a new block is added:
+1. **Dimensions Assigned:**
+   - Default: `w = 2`, `h = 1` (Text, Link, Checklist)
+   - 1x1 Blocks: `w = 1`, `h = 1` (Location, Image, Custom Emoji)
+   - 2x2 Social Widgets: `w = 2`, `h = 2` (Instagram, GitHub, YouTube, Twitter, LinkedIn, Dribbble)
+2. **Space Search Algorithm:**
+   Scans grid raster-style from top-left (`y = 0`, `x = 0` to `3`), checking if `{ x, y, w, h }` fits without colliding with existing blocks and stays within `x + w <= 4`.
+   If row `y` fills up, increments `y += 1` and resets `x = 0`.
+3. **Insertion & Reflow:** Inserts block into state and executes `resolveLayout(placed, null, applyGravity)`.
+
+---
+
+# 7. DRAG BEHAVIOR & POINTER INTERACTION
+
+## Pointer Drag System (Pointer Events)
+The system uses native HTML Pointer Events (`onPointerDown`, `onPointerMove`, `onPointerUp`) with `setPointerCapture`.
+
+### Lifecycle:
+1. **Pointer Down (`handlePointerDownBlock`):**
+   - Ignores clicks originating from buttons, inputs, edit/delete controls, or resize handles (`.bento-card-resize-handle`).
+   - Measures initial pointer coordinates (`startPointerX`, `startPointerY`) and initial card offsets (`startLeft`, `startTop`).
+   - Sets `potentialDrag`.
+
+2. **Pointer Move Threshold (`handlePointerMoveBlock`):**
+   - Drag triggers only when pointer moves **> 5px** (`Math.sqrt(dx*dx + dy*dy) > 5`).
+   - Acquires pointer capture: `cardEl.setPointerCapture(pointerId)`.
+   - Transitions state to `activeDrag`.
+
+3. **Active Dragging:**
+   - Card position updates directly to cursor: `currentLeft = startLeft + dx`, `currentTop = startTop + dy`.
+   - Calculates target grid snap position (`snapX`, `snapY`).
+   - Renders a **dashed snap preview placeholder** (`.bento-grid-preview-placeholder`) at `{ snapX, snapY, w, h }` with a blue dimension tag showing `w × h`.
+   - Executes real-time live collision resolution `resolveLayout`, so sibling blocks push down interactively.
+   - **Visual State during Drag:**
+     - Card opacity drops to `0.95` (or original slot drops to `0.35`).
+     - Card elevates with `box-shadow: 0 20px 40px rgba(0,0,0,0.08)`.
+     - Card scales and tilts: `transform: scale(1.025) rotate(1deg)`.
+     - Cursor changes to `grabbing`.
+
+4. **Pointer Up (`handlePointerUpBlock`):**
+   - Releases pointer capture: `cardEl.releasePointerCapture(pointerId)`.
+   - Finalizes grid placement at `snapX`, `snapY`.
+   - Executes final gravity pass if `freeGridMode` is false.
+   - Clears `activeDrag`.
+
+---
+
+# 8. RESIZE BEHAVIOR & 4-HANDLE ENGINE
+
+Resizing uses **4 edge handles** (`top`, `bottom`, `left`, `right`).
+
+```text
+       ┌───────────── Top Handle ─────────────┐
+       │                                      │
+ Left Handle                              Right Handle
+       │                                      │
+       └──────────── Bottom Handle ───────────┘
+```
+
+## Edge Handle Specific Behavior
+
+| Handle | Drag Direction | Fixed Edge | Changing Properties | Limits & Snapping |
+| :--- | :--- | :--- | :--- | :--- |
+| **Right** | Horizontal | Left edge fixed | `width` increases/decreases | `snapW = round((width+gap)/colWidth)`, `1 <= snapW <= 4 - block.x` |
+| **Left** | Horizontal | Right edge fixed | `left` & `width` change | `snapX` moves between `0` and `block.x + block.w - 1`; `snapW = initialRight - snapX` |
+| **Bottom**| Vertical | Top edge fixed | `height` increases/decreases | `snapH = round((height+gap)/rowHeight)`, `snapH >= 1` |
+| **Top** | Vertical | Bottom edge fixed | `top` & `height` change | `snapY` moves between `0` and `block.y + block.h - 1`; `snapH = initialBottom - snapY` |
+
+## Live Collision during Resize
+As handles are pulled, `handlePointerMoveResize` recalculates `snapW`, `snapH`, `snapX`, `snapY` and runs `resolveLayout()` continuously so adjacent cards push out of the way in real-time.
+
+---
+
+# 9. HOVER BEHAVIOR & OVERLAY CONTROLS
+
+## Hover Interactions
+When hovering over any `.bento-card-base`:
+1. **Elevation:** Card translates upward by `-2px` (`transform: translateY(-2px)`).
+2. **Shadow:** Shadow elevates to `0 8px 24px rgba(0,0,0,0.03)`.
+3. **Action Controls Reveal:**
+   - **Edit Button (`.edit-block-btn`):** Positioned at `top: 12px`, `right: 50px`. Circular 32x32px button containing `✏️`. Smooth opacity fade from `0` to `1`.
+   - **Delete Button (`.delete-block-btn`):** Positioned at `top: 12px`, `right: 12px`. Circular 32x32px button containing `🗑️`. Smooth opacity fade from `0` to `1`. Hovering highlights red (`#EF4444`) with `rotate(5deg) scale(1.1)`.
+   - **Resize Handles (`.bento-card-resize-handle`):** Edge handles fade from `opacity: 0` to `opacity: 1`. Hovering handle highlights blue pill (`#3E66FB`) with width/height expanding from 32px to 48px.
+
+---
+
+# 10. BLOCK TOOLBARS & MODAL CONTROLS
+
+## 1. Top Navbar Header (`bento-nav-header`)
+* **URL Copy Chip:** Clickable pill displaying `🔗 hiprofile.com/{username}`. Copies link to clipboard and triggers Toast.
+* **Save Layout Button (`.btn-bento-save-layout`):** Manual persistence trigger. Displays live states:
+  - `idle`: Blue `#3B82F6` — "Save Layout"
+  - `saving`: Hourglass spinner `⏳ Saving...`
+  - `saved`: Green `#10B981` — `✓ Layout Saved`
+  - `failed`: Red `#EF4444` — `✕ Failed to Save`
+* **Unsaved Indicator:** Displays `● Unsaved Changes` (Amber `#F59E0B`) or `✓ All Changes Saved` (Green `#10B981`).
+* **Reset Layout Button (`.btn-bento-reset-layout`):** Clears workspace and restores empty grid.
+* **Theme Toggle Button:** Toggles Light / Dark mode.
+
+## 2. Floating Bottom Action Dock (`bento-bottom-actions`)
+Centered glassmorphic pill bar at viewport bottom (`position: fixed`, `bottom: 24px`):
+* **Theme Switch:** `☀️ / 🌙`
+* **Share Page:** `📤 Share my page`
+* **Inbox:** `💬`
+* **Explore:** `🧭`
+
+## 3. Tool Picker & Block Creation Modal (`activeDialog === 'select-tool'`)
+Triggered by clicking the dotted `＋ Click here to add a block` card at the bottom of the grid. Opens modal dialog with categorized block options:
+- **Content & Cards:** Emoji, Link, Text, Checklist, Local Image Card, AI Quote.
+- **Social Profiles:** GitHub, Instagram, YouTube, Twitter / X, LinkedIn, Dribbble.
+- **Layout Controls:** Grid Spacing Toggle, Free Grid / Auto-Compact Mode Toggle.
+
+---
+
+# 11. INDIVIDUAL BLOCK TYPES & UI SPECIFICATIONS
+
+The repository renders **13 distinct block types**:
+
+### 1. Location Block (`location`)
+- **Default Size:** `1 x 1` (w: 1, h: 1)
+- **UI Structure:** Pulsing blue GPS location dot with ripple CSS keyframe animation + user location text (`Salur, Andhra Pradesh, India`).
+
+### 2. Custom Emoji Block (`custom-emoji`)
+- **Default Size:** `1 x 1`
+- **UI Structure:** Large centered emoji text (font-size ~`3.5rem`). Editable via modal input.
+
+### 3. Custom Text Card (`custom-text`)
+- **Default Size:** `2 x 1`
+- **UI Structure:** Multi-line text block with custom typography. Used for quotes or bio notes.
+
+### 4. Custom Link Card (`custom-link`)
+- **Default Size:** `2 x 1`
+- **UI Structure:** 
+  - *Text-only mode:* Displays platform icon, domain title, redirect arrow `↗`, and domain URL.
+  - *Cover image mode:* Full-bleed background image with bottom dark gradient overlay (`linear-gradient(to top, rgba(15,23,42,0.9)...)`), white brand icon, title, and link URL.
+
+### 5. Custom Checklist Card (`custom-checklist`)
+- **Default Size:** `2 x 1`
+- **UI Structure:** Card title + bulleted checklist items with drag-and-drop item reordering support in edit modal.
+
+### 6. Local / Project Image Card (`image`)
+- **Default Size:** `1 x 1`
+- **UI Structure:** Zero padding card with `object-fit: cover` image background. Supports Google Drive URL conversion (`lh3.googleusercontent.com/d/{id}`).
+
+### 7. Behance Card (`behance`)
+- **Default Size:** `2 x 2`
+- **UI Structure:** Light blue background (`#EDF3FF`), Behance logo `Bē`, project title, and bottom preview card.
+
+### 8. Instagram Widget (`instagram`)
+- **Default Size:** `2 x 2`
+- **UI Structure:** Live API widget. Header banner with platform icon, profile avatar, full name link, handle `@username`, follower/following/post count metrics, and a 3-column grid of recent posts with hover overlay showing likes `❤️`.
+
+### 9. GitHub Widget (`github`)
+- **Default Size:** `2 x 2`
+- **UI Structure:** Dark/light platform header, avatar, name, bio, follower/following/repo metrics, and a list of top 3 public repositories displaying star counts `⭐`, forks `🍴`, primary language color dot, and description.
+
+### 10. YouTube Widget (`youtube`)
+- **Default Size:** `2 x 2`
+- **UI Structure:** Red brand header (`#FF0000`), channel avatar, subscriber/video/view count stats, and 3 recent video thumbnails with hover title overlays and view counts `👁️`.
+
+### 11. Twitter / X Widget (`twitter`)
+- **Default Size:** `2 x 2`
+- **UI Structure:** Platform header, display name, handle, bio, follower/following/tweet stats, and 3 recent tweets (renders image preview if media exists, or text card with likes `❤️` and retweets `🔁`).
+
+### 12. LinkedIn Widget (`linkedin`)
+- **Default Size:** `2 x 2`
+- **UI Structure:** Blue header (`#0077B5`), avatar, name, company name `🏢`, location `📍`, connection/follower counts, and recent post cards with like `👍` and comment `💬` counts.
+
+### 13. Dribbble Widget (`dribbble`)
+- **Default Size:** `2 x 2`
+- **UI Structure:** Pink brand header (`#EA4C89`), avatar, bio, shot count stats, and a 3-column thumbnail grid of recent shots with `👁️ View` hover overlay.
+
+---
+
+# 12. CONTAINER QUERIES & RESPONSIVE BEHAVIOR
+
+The Bento grid uses responsive breakpoint adaptations:
+
+```css
+/* Desktop: Full 4-Column Absolute Grid */
+.bento-grid-layout-new {
+    /* Absolute Positioning calculations active */
+}
+
+/* Tablet Breakpoint (max-width: 900px) */
+@media (max-width: 900px) {
+    .bento-grid-layout-new {
+        grid-template-columns: repeat(2, 1fr);
+        grid-auto-rows: minmax(140px, auto);
+        gap: 16px;
+    }
+    .bento-card-base {
+        grid-column: span var(--tablet-span, 1) !important;
+        height: auto !important;
+    }
+    .bento-git-card-new, .bento-banner-card-new {
+        flex-direction: column;
+    }
+}
+
+/* Mobile Breakpoint (max-width: 600px) */
+@media (max-width: 600px) {
+    .bento-grid-background {
+        display: none; /* Background grid hidden on mobile */
+    }
+    .bento-grid-layout-new {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+    .bento-card-base {
+        grid-column: span 1 !important;
+        grid-row: auto !important;
+        height: auto !important;
+    }
+}
+```
+
+---
+
+# 13. ANIMATION SYSTEM SPECIFICATION
+
+| Interaction | Duration | Easing | Properties Animated | CSS Class / Trigger |
+| :--- | :--- | :--- | :--- | :--- |
+| **Grid Reflow / Drag Movement** | `0.35s` | `cubic-bezier(0.16, 1, 0.3, 1)` | `left`, `top`, `width`, `height` | `.bento-card-base` |
+| **Card Hover Elevation** | `0.20s` | `ease` | `transform (translateY)`, `box-shadow` | `.bento-card-base:hover` |
+| **Drag Pick Up** | `0.20s` | `ease` | `transform (scale 1.025, rotate 1deg)`, `box-shadow` | `.bento-card-base.dragging` |
+| **Button Fade-In** | `0.20s` | `cubic-bezier(0.4, 0, 0.2, 1)` | `opacity`, `transform` | `.edit-block-btn`, `.delete-block-btn` |
+| **Resize Handle Hover** | `0.20s` | `ease` | `opacity`, `width`, `height` | `.bento-card-resize-handle::after` |
+| **Loading Skeleton** | `1.50s` | `infinite linear` | `background-position` (Shimmer) | `.bento-insta-shimmer` |
+| **GPS Dot Ripple** | `2.00s` | `infinite ease-out` | `transform (scale)`, `opacity` | `.bento-loc-dot-new::after` |
+
+---
+
+# 14. LOADING, ERROR, & EMPTY STATES
+
+## Loading States (`.bento-insta-loading`)
+Social cards render three shimmer skeleton bars (`header`, `stats`, `grid`) while fetching API data:
+```css
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.bento-insta-shimmer {
+  background: linear-gradient(90deg, #F1F5F9 25%, #E2E8F0 50%, #F1F5F9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+```
+
+## Error States (`.bento-insta-error`)
+If an API fails or username is invalid, the specific card captures the error locally without crashing the canvas. Displays platform logo, handle `@username`, and exact error message with retry edit trigger.
+
+## Empty States
+- **Empty Canvas:** Displays dotted add card button `＋ Click here to add a block`.
+- **Unconnected Widget:** Displays connection prompt: `"Connect your account or click edit to set a username."`
+
+---
+
+# 15. VISUAL DESIGN SYSTEM TOKENS
+
+```css
+:root {
+    --bento-card-bg-light: #FFFFFF;
+    --bento-card-bg-dark: #1E293B;
+    --bento-card-border-light: #EAEAEF;
+    --bento-card-border-dark: #334155;
+    --bento-card-radius: 28px;
+    --bento-button-radius: 10px;
+    --bento-accent-blue: #3E66FB;
+    --bento-accent-hover: #254EDB;
+    --bento-danger-red: #EF4444;
+    --bento-success-green: #10B981;
+    --bento-warning-amber: #F59E0B;
+}
+```
+
+---
+
+# 16. UX STATE MACHINE
+
+```text
+ ┌────────────────────────────────────────────────────────┐
+ │                         IDLE                           │
+ └───────────────────────────┬────────────────────────────┘
+                             │
+       ┌─────────────────────┼─────────────────────┐
+       ▼                     ▼                     ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
+│  HOVER CARD  │     │ POINTER DOWN │     │ OPEN EDIT DIALOG │
+└──────┬───────┘     └──────┬───────┘     └────────┬─────────┘
+       │                    │                      │
+       │ Pointer Move > 5px │                      │ User Submits Form
+       ▼                    ▼                      ▼
+┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
+│ RESIZING (4) │     │ DRAGGING CARD│     │ UPDATE GRID STATE│
+└──────┬───────┘     └──────┬───────┘     └────────┬─────────┘
+       │                    │                      │
+       └────────────────────┼──────────────────────┘
+                            │
+                      Pointer Release
+                            │
+                            ▼
+              ┌───────────────────────────┐
+              │ RESOLVE LAYOUT & COMPACT  │
+              └─────────────┬─────────────┘
+                            │
+                            ▼
+              ┌───────────────────────────┐
+              │ SET HAS UNSAVED CHANGES   │
+              └───────────────────────────┘
+```
+
+---
+
+# 17. REPLICATION SPECIFICATION CHECKLIST FOR HI-PROFILE
+
+To reproduce this exact Bento UI/UX experience in another codebase, implement the following steps:
+
+1. **State Engine:** Store grid as an array of objects: `{ id, type, x, y, w, h, isVisible, content, ...settings }`.
+2. **Container Observer:** Wrap grid container with `ResizeObserver` to track dynamic `containerWidth`.
+3. **Cell Metrics:** Calculate `colWidth = (containerWidth + gap) / 4` and `rowHeight = 160 + gap`.
+4. **Absolute Placement:** Compute inline styles for cards: `left = x * colWidth`, `top = y * rowHeight`, `width = w * colWidth - gap`, `height = h * rowHeight - gap`.
+5. **Collision Resolver:** Copy `collides()` and `resolveLayout()` with sorted Y/X checking and optional gravity pass.
+6. **Pointer Dragging:** Use `onPointerDown`, `onPointerMove`, `onPointerUp` with 5px distance threshold and `setPointerCapture`.
+7. **Ghost Preview:** Render dynamic preview rectangle `.bento-grid-preview-placeholder` at `{ snapX, snapY, w, h }`.
+8. **Resize Handles:** Add 4 edge handles (`right`, `left`, `bottom`, `top`) with Col/Row snapping logic.
+9. **Hover Toolbar:** Add circular `.edit-block-btn` and `.delete-block-btn` with `opacity: 0 -> 1` CSS transitions.
+10. **Card Widgets:** Implement the 13 card renderers with skeleton shimmer loading and per-card error boundaries.
+11. **Responsive Fallbacks:** Add `@media (max-width: 900px)` (2-column CSS Grid) and `@media (max-width: 600px)` (1-column CSS Grid).
+12. **Persistence:** Connect manual layout save to `/layouts` API endpoint with status toast notifications.

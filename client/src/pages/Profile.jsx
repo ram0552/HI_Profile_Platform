@@ -4,12 +4,7 @@ import { useOnboarding } from '../context/OnboardingContext'
 import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
 
-const BIOS = [
-  '🚀 Exploring the digital universe. Creating cool links and building awesome designs.',
-  '✨ Full-time dreamer, part-time builder. Welcome to my personal bio corner!',
-  '🍕 Pixel perfect designer & coffee enthusiast. More details coming soon!',
-  '🎨 Creating beautiful user experiences and connecting people worldwide.',
-]
+
 
 function AvatarDisplay({ avatar }) {
   if (avatar?.type === 'file' && avatar.data) {
@@ -86,7 +81,7 @@ export default function Profile() {
           <textarea placeholder="Your bio..." maxLength={160} value={bio} onChange={e=>setBio(e.target.value)}
             style={{ width: '100%', height: 110, borderRadius: 12, border: '1.5px solid #E2E2E8', background: '#fff', padding: '16px 42px 16px 16px', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '1.05rem', color: '#111', resize: 'none', outline: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }} />
           <span onClick={() => setBio(BIOS[Math.floor(Math.random()*BIOS.length)])}
-            title="AI Bio Helper" style={{ position: 'absolute', right: 16, top: 16, fontSize: '1.25rem', color: '#3B82F6', cursor: 'pointer', userSelect: 'none' }}>✨</span>
+            title="AI Bio Helper" style={{ position: 'absolute', right: 16, top: 16, fontSize: '1.25rem', color: '#3B82F6', cursor: 'pointer', userSelect: 'none' }}></span>
         </div>
 
         {/* Buttons */}

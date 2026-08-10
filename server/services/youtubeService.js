@@ -80,6 +80,7 @@ const getYouTubeProfile = async (usernameOrChannelId) => {
         .slice(0, 3)
         .map(video => ({
             title: video.title || '',
+            imageUrl: video.thumbnailUrl || '',
             thumbnailUrl: video.thumbnailUrl || '',
             url: video.url || '',
             viewCount: video.viewCount || 0,

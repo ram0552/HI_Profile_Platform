@@ -15,6 +15,8 @@ import Select from './pages/Select'
 import TimelineView from './pages/TimelineView'
 import TimelineLive from './pages/TimelineLive'
 import BentoView from './pages/BentoView'
+import Dashboard from './pages/Dashboard'
+import EditProfile from './pages/EditProfile'
 
 export default function App() {
   return (
@@ -36,6 +38,8 @@ export default function App() {
             <Route path="/timeline" element={<TimelineView />} />
             <Route path="/timeline-live" element={<TimelineLive />} />
             <Route path="/bento" element={<BentoView />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/edit-profile" element={<EditProfile />} />
             <Route path="/:username" element={<BentoView isPublic={true} />} />
           </Routes>
         </OnboardingProvider>

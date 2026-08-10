@@ -9,8 +9,9 @@ router.post('/bio', protect, profileController.updateBio);
 router.post('/social', protect, profileController.updateSocialLinks);
 router.post('/template', protect, profileController.selectTemplate);
 
-// Profile detail routes
+// Profile detail & update routes
 router.get('/me', protect, profileController.getProfileMe);
+router.put('/me', protect, profileController.updateProfileMe);
 router.get('/user/:username', profileController.getPublicProfile);
 
 module.exports = router;

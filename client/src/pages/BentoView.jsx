@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { LayoutDashboard } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
 import { getSocialIcon, getSocialBrandColor } from '../components/SocialIcons'
-import { placeBlocks, resolveLayout, collides, GRID_COLUMNS } from '../utils/bentoGrid'
+import { placeBlocks, resolveLayout, resolveDragReorder, collides, GRID_COLUMNS, getActiveColumns, getGridDimensions, calculateDragSnapWithHysteresis } from '../utils/bentoGrid'
 import {
   getUserBlocks,
   getPublicProfileAndBlocks,
@@ -125,6 +126,14 @@ export default function BentoView({ isPublic = false }) {
   const [potentialDrag, setPotentialDrag] = useState(null)
   const [activeDrag, setActiveDrag] = useState(null)
   const [activeResize, setActiveResize] = useState(null)
+
+  // Performance RAF & Accessibility Live Region Refs
+  const [ariaLiveMsg, setAriaLiveMsg] = useState('')
+  const potentialDragRef = useRef(null)
+  const dragStateRef = useRef(null)
+  const resizeStateRef = useRef(null)
+  const rafIdRef = useRef(null)
+
 
   const draggedBlockId = activeDrag ? activeDrag.blockId : null;
 
@@ -297,186 +306,341 @@ export default function BentoView({ isPublic = false }) {
     }
   };
 
-  // Cycle Card Background Palette (Section 11)
-  const bgPalette = ['#FFFFFF', '#F8FAFC', '#EEF2FF', '#F0FDF4', '#FEF2F2', '#0F172A'];
-  const cycleBgColor = async (e, block) => {
-    e.stopPropagation();
-    const currentBg = block.configuration?.bg || '#FFFFFF';
-    const nextIdx = (bgPalette.indexOf(currentBg) + 1) % bgPalette.length;
-    const newBg = bgPalette[nextIdx];
-
-    const updatedConfig = { ...block.configuration, bg: newBg };
-    setGridBlocks(prev => prev.map(b => b.id === block.id ? { ...b, configuration: updatedConfig } : b));
-
-    if (!isPublicView && accessToken) {
-      try {
-        await updateBlockApi(block._id || block.id, { configuration: updatedConfig }, accessToken);
-      } catch (err) {
-        toast('Failed to update background style');
-      }
-    }
-  };
-
-  // Toggle Block Visibility (Hide / Restore)
-  const handleToggleVisibility = async (block) => {
-    if (isPublicView) return;
-    const newVisibility = block.visibility === false;
-    setGridBlocks(prev => prev.map(b => b.id === block.id ? { ...b, visibility: newVisibility } : b));
-    toast(newVisibility ? 'Block made visible' : 'Block hidden from public view');
-
-    if (accessToken) {
-      try {
-        await updateBlockApi(block._id || block.id, { visibility: newVisibility }, accessToken);
-      } catch (err) {
-        toast('Failed to sync visibility state');
-      }
-    }
-  };
-
-  // Toggle Block Lock (Lock / Unlock position & sizing)
-  const handleToggleLock = async (block) => {
-    if (isPublicView) return;
-    const newLocked = !block.locked;
-    setGridBlocks(prev => prev.map(b => b.id === block.id ? { ...b, locked: newLocked } : b));
-    toast(newLocked ? '🔒 Block locked (Move/Resize disabled)' : '🔓 Block unlocked');
-
-    if (accessToken) {
-      try {
-        await updateBlockApi(block._id || block.id, { locked: newLocked }, accessToken);
-      } catch (err) {
-        toast('Failed to sync lock state');
-      }
-    }
-  };
-
-  // Keyboard Shortcuts & Accessibility Controls (Section 22)
+  // Keyboard Shortcuts & Accessibility Controls
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // 1. Handle Escape key during active Drag or Resize -> Cancel operation cleanly!
+      if (e.key === 'Escape') {
+        if (activeDrag) {
+          e.preventDefault();
+          if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+          if (activeDrag.cardEl && activeDrag.cardEl.style) {
+            activeDrag.cardEl.style.transform = '';
+          }
+          const origX = activeDrag.originalX;
+          const origY = activeDrag.originalY;
+          const restored = gridBlocks.map(b => b.id === activeDrag.blockId ? { ...b, x: origX, y: origY, layout: { ...b.layout, x: origX, y: origY } } : b);
+          setGridBlocks(resolveLayout(restored, null));
+          setActiveDrag(null);
+          setPotentialDrag(null);
+          dragStateRef.current = null;
+          toast('Drag cancelled');
+          return;
+        }
+
+        if (activeResize) {
+          e.preventDefault();
+          const origX = activeResize.initialX;
+          const origY = activeResize.initialY;
+          const origW = activeResize.initialW;
+          const origH = activeResize.initialH;
+          const restored = gridBlocks.map(b => b.id === activeResize.blockId ? { ...b, x: origX, y: origY, w: origW, h: origH, layout: { ...b.layout, x: origX, y: origY, w: origW, h: origH } } : b);
+          setGridBlocks(resolveLayout(restored, null));
+          setActiveResize(null);
+          resizeStateRef.current = null;
+          toast('Resize cancelled');
+          return;
+        }
+
+        if (selectedBlockId) {
+          setSelectedBlockId(null);
+          return;
+        }
+      }
+
       if (!selectedBlockId || isPublicView) return;
       if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
 
       const targetBlock = gridBlocks.find(b => b.id === selectedBlockId);
       if (!targetBlock) return;
 
+      const activeCols = getActiveColumns(containerWidth);
+
+      // Arrow Key Movement & Resizing
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault();
+
+        let { x, y, w, h } = targetBlock;
+
+        if (e.shiftKey) {
+          // Resize via Shift + Arrow
+          if (e.key === 'ArrowRight') w = Math.min(activeCols - x, w + 1);
+          if (e.key === 'ArrowLeft') w = Math.max(1, w - 1);
+          if (e.key === 'ArrowDown') h = h + 1;
+          if (e.key === 'ArrowUp') h = Math.max(1, h - 1);
+        } else {
+          // Move via Arrow
+          if (e.key === 'ArrowRight') x = Math.min(activeCols - w, x + 1);
+          if (e.key === 'ArrowLeft') x = Math.max(0, x - 1);
+          if (e.key === 'ArrowDown') y = y + 1;
+          if (e.key === 'ArrowUp') y = Math.max(0, y - 1);
+        }
+
+        const updated = gridBlocks.map(b => b.id === targetBlock.id ? { ...b, x, y, w, h, layout: { ...b.layout, x, y, w, h } } : b);
+        const resolved = resolveLayout(updated, null);
+        setGridBlocks(resolved);
+        setAriaLiveMsg(`Block updated: position (${x + 1}, ${y + 1}), size ${w}x${h}`);
+
+        if (accessToken) {
+          reorderBlocksApi(resolved.map((b, idx) => ({
+            id: b.id || b._id,
+            layout: { x: b.x, y: b.y, w: b.w, h: b.h },
+            order: idx
+          })), accessToken).catch(() => { });
+        }
+        return;
+      }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
-        if (!targetBlock.locked) handleDeleteBlock(selectedBlockId);
-        else toast('🔒 Locked block cannot be deleted');
-      } else if (e.key === 'Escape') {
-        setSelectedBlockId(null);
+        handleDeleteBlock(selectedBlockId);
       } else if (e.key === 'e' || e.key === 'E') {
         e.preventDefault();
         openEditDialog(targetBlock);
       } else if (e.key === 'd' || e.key === 'D') {
         e.preventDefault();
         handleDuplicateBlock(targetBlock);
-      } else if (e.key === 'h' || e.key === 'H') {
-        e.preventDefault();
-        handleToggleVisibility(targetBlock);
-      } else if (e.key === 'l' || e.key === 'L') {
-        e.preventDefault();
-        handleToggleLock(targetBlock);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedBlockId, gridBlocks, isPublicView]);
+  }, [selectedBlockId, gridBlocks, isPublicView, activeDrag, activeResize, containerWidth, accessToken]);
+
+  // Global Pointer Event Listeners for Reliable Window-wide Drag/Resize Tracking
+  useEffect(() => {
+    const onGlobalPointerMove = (e) => {
+      if (dragStateRef.current) {
+        handlePointerMoveBlock(e, dragStateRef.current.blockId);
+      } else if (potentialDragRef.current) {
+        handlePointerMoveBlock(e, potentialDragRef.current.blockId);
+      } else if (resizeStateRef.current) {
+        handlePointerMoveResize(e, resizeStateRef.current.blockId);
+      }
+    };
+
+    const onGlobalPointerUp = (e) => {
+      if (dragStateRef.current) {
+        handlePointerUpBlock(e, dragStateRef.current.blockId);
+      } else if (potentialDragRef.current) {
+        handlePointerUpBlock(e, potentialDragRef.current.blockId);
+      } else if (resizeStateRef.current) {
+        handlePointerUpResize(e, resizeStateRef.current.blockId);
+      }
+    };
+
+    window.addEventListener('pointermove', onGlobalPointerMove);
+    window.addEventListener('pointerup', onGlobalPointerUp);
+    window.addEventListener('pointercancel', onGlobalPointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', onGlobalPointerMove);
+      window.removeEventListener('pointerup', onGlobalPointerUp);
+      window.removeEventListener('pointercancel', onGlobalPointerUp);
+    };
+  }, [containerWidth, accessToken, gridBlocks]);
 
   // Pointer Event Handlers (Drag & Drop)
   const handlePointerDownBlock = (e, block) => {
-    if (isPublicView || block.locked) return;
+    if (isPublicView) return;
     if (
-      e.target.closest('.bento-card-resize-handle') ||
-      e.target.closest('.delete-block-btn') ||
-      e.target.closest('.edit-block-btn') ||
-      e.target.closest('input') ||
+      e.target.closest('a') ||
       e.target.closest('button') ||
-      e.target.closest('a')
+      e.target.closest('input') ||
+      e.target.closest('textarea') ||
+      e.target.closest('.bento-card-resize-handle') ||
+      e.target.closest('.bento-floating-toolbar') ||
+      e.target.closest('.delete-block-btn') ||
+      e.target.closest('.edit-block-btn')
     ) {
       return;
     }
 
-    const gap = 24;
-    const colWidth = (containerWidth + gap) / GRID_COLUMNS;
-    const rowHeight = 160 + gap;
+    const activeCols = getActiveColumns(containerWidth);
+    const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols);
 
-    setPotentialDrag({
+    const cardEl = e.currentTarget;
+    const pointerId = e.pointerId;
+
+    try { cardEl.setPointerCapture(pointerId); } catch (err) { }
+
+    const pInfo = {
+      blockId: block.id,
       block,
-      pointerId: e.pointerId,
-      cardEl: e.currentTarget,
+      pointerId,
+      cardEl,
       startPointerX: e.clientX,
       startPointerY: e.clientY,
       startLeft: block.x * colWidth,
       startTop: block.y * rowHeight
-    });
+    };
+
+    potentialDragRef.current = pInfo;
+    setPotentialDrag(pInfo);
   };
 
   const handlePointerMoveBlock = (e, blockId) => {
-    if (potentialDrag && potentialDrag.block.id === blockId && !activeDrag) {
-      const dx = e.clientX - potentialDrag.startPointerX;
-      const dy = e.clientY - potentialDrag.startPointerY;
-      if (Math.sqrt(dx * dx + dy * dy) > 5) {
+    const pDrag = potentialDragRef.current;
+
+    // Initial threshold check (8px threshold before activating drag mode)
+    if (pDrag && pDrag.blockId === blockId && !dragStateRef.current) {
+      const dx = e.clientX - pDrag.startPointerX;
+      const dy = e.clientY - pDrag.startPointerY;
+      if (Math.hypot(dx, dy) >= 8) {
         e.preventDefault();
-        try { potentialDrag.cardEl.setPointerCapture(potentialDrag.pointerId); } catch (err) {}
-        setActiveDrag({
-          blockId: blockId,
-          startPointerX: potentialDrag.startPointerX,
-          startPointerY: potentialDrag.startPointerY,
-          startLeft: potentialDrag.startLeft,
-          startTop: potentialDrag.startTop,
-          currentLeft: potentialDrag.startLeft + dx,
-          currentTop: potentialDrag.startTop + dy,
-          snapX: potentialDrag.block.x,
-          snapY: potentialDrag.block.y,
-          w: potentialDrag.block.w,
-          h: potentialDrag.block.h
-        });
+
+        const initialDragState = {
+          blockId: pDrag.blockId,
+          pointerId: pDrag.pointerId,
+          cardEl: pDrag.cardEl,
+          startPointerX: pDrag.startPointerX,
+          startPointerY: pDrag.startPointerY,
+          startLeft: pDrag.startLeft,
+          startTop: pDrag.startTop,
+          currentPointerX: e.clientX,
+          currentPointerY: e.clientY,
+          currentLeft: pDrag.startLeft + dx,
+          currentTop: pDrag.startTop + dy,
+          snapX: pDrag.block.x,
+          snapY: pDrag.block.y,
+          lastSnapX: pDrag.block.x,
+          lastSnapY: pDrag.block.y,
+          w: pDrag.block.w,
+          h: pDrag.block.h,
+          originalX: pDrag.block.x,
+          originalY: pDrag.block.y,
+          originalW: pDrag.block.w,
+          originalH: pDrag.block.h
+        };
+
+        dragStateRef.current = initialDragState;
+        setActiveDrag(initialDragState);
+        potentialDragRef.current = null;
+        setPotentialDrag(null);
       }
       return;
     }
 
-    if (activeDrag && activeDrag.blockId === blockId) {
+    const aDrag = dragStateRef.current;
+    if (aDrag && aDrag.blockId === blockId) {
       e.preventDefault();
-      const dx = e.clientX - activeDrag.startPointerX;
-      const dy = e.clientY - activeDrag.startPointerY;
 
-      const gap = 24;
-      const colWidth = (containerWidth + gap) / GRID_COLUMNS;
-      const rowHeight = 160 + gap;
+      // Viewport Edge Auto-Scroll
+      if (e.clientY < 60) {
+        window.scrollBy(0, -12);
+      } else if (window.innerHeight - e.clientY < 60) {
+        window.scrollBy(0, 12);
+      }
 
-      const currentLeft = activeDrag.startLeft + dx;
-      const currentTop = activeDrag.startTop + dy;
+      aDrag.currentPointerX = e.clientX;
+      aDrag.currentPointerY = e.clientY;
 
-      let snapX = Math.round(currentLeft / colWidth);
-      snapX = Math.max(0, Math.min(GRID_COLUMNS - activeDrag.w, snapX));
-      let snapY = Math.max(0, Math.round(currentTop / rowHeight));
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
 
-      setActiveDrag(prev => ({ ...prev, currentLeft, currentTop, snapX, snapY }));
+      rafIdRef.current = requestAnimationFrame(() => {
+        if (!dragStateRef.current) return;
+        const {
+          startPointerX,
+          startPointerY,
+          startLeft,
+          startTop,
+          lastSnapX,
+          lastSnapY,
+          w,
+          cardEl
+        } = dragStateRef.current;
 
-      setGridBlocks((prevBlocks) => {
-        const movingBlock = prevBlocks.find(b => b.id === blockId);
-        if (!movingBlock) return prevBlocks;
-        const updated = prevBlocks.map(b => b.id === blockId ? { ...b, x: snapX, y: snapY, layout: { ...b.layout, x: snapX, y: snapY } } : b);
-        return resolveLayout(updated, { ...movingBlock, x: snapX, y: snapY });
+        const pX = dragStateRef.current.currentPointerX || e.clientX;
+        const pY = dragStateRef.current.currentPointerY || e.clientY;
+
+        const dx = pX - startPointerX;
+        const dy = pY - startPointerY;
+
+        const currentLeft = startLeft + dx;
+        const currentTop = startTop + dy;
+
+        // 1:1 smooth visual positioning
+        if (cardEl && cardEl.style) {
+          cardEl.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+        }
+
+        const activeCols = getActiveColumns(containerWidth);
+        const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols);
+
+        const { snapX, snapY } = calculateDragSnapWithHysteresis(
+          currentLeft,
+          currentTop,
+          colWidth,
+          rowHeight,
+          lastSnapX,
+          lastSnapY,
+          w,
+          activeCols,
+          0.55 // 55% cell distance threshold with deadband
+        );
+
+        // Guard: ONLY run resolveLayout and update gridBlocks state when snap position actually changes!
+        if (snapX !== lastSnapX || snapY !== lastSnapY) {
+          dragStateRef.current.lastSnapX = snapX;
+          dragStateRef.current.lastSnapY = snapY;
+          dragStateRef.current.snapX = snapX;
+          dragStateRef.current.snapY = snapY;
+
+          setActiveDrag(prev => prev ? ({ ...prev, currentLeft, currentTop, snapX, snapY, lastSnapX: snapX, lastSnapY: snapY }) : null);
+
+          setGridBlocks((prevBlocks) => {
+            const movingBlock = prevBlocks.find(b => b.id === blockId);
+            if (!movingBlock) return prevBlocks;
+            const updated = prevBlocks.map(b => b.id === blockId ? { ...b, x: snapX, y: snapY, layout: { ...b.layout, x: snapX, y: snapY } } : b);
+            return resolveDragReorder(updated, { ...movingBlock, x: snapX, y: snapY }, aDrag.originalX, aDrag.originalY, activeCols);
+          });
+
+          setAriaLiveMsg(`Block moved to column ${snapX + 1}, row ${snapY + 1}`);
+        } else {
+          setActiveDrag(prev => prev ? ({ ...prev, currentLeft, currentTop }) : null);
+        }
       });
     }
   };
 
   const handlePointerUpBlock = async (e, blockId) => {
+    if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+
+    const pDrag = potentialDragRef.current;
+    const aDrag = dragStateRef.current;
+
+    // Released under movement threshold -> SELECT block
+    if (pDrag && pDrag.blockId === blockId && !aDrag) {
+      setSelectedBlockId(blockId);
+      potentialDragRef.current = null;
+      setPotentialDrag(null);
+      try { pDrag.cardEl.releasePointerCapture(pDrag.pointerId); } catch (err) { }
+      return;
+    }
+
+    potentialDragRef.current = null;
     setPotentialDrag(null);
-    if (activeDrag && activeDrag.blockId === blockId) {
+
+    if (aDrag && aDrag.blockId === blockId) {
       e.preventDefault();
       e.stopPropagation();
-      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+      try { aDrag.cardEl.releasePointerCapture(aDrag.pointerId); } catch (err) { }
 
-      const finalSnapX = activeDrag.snapX;
-      const finalSnapY = activeDrag.snapY;
+      const finalSnapX = aDrag.snapX;
+      const finalSnapY = aDrag.snapY;
+
+      if (aDrag.cardEl && aDrag.cardEl.style) {
+        aDrag.cardEl.style.transform = '';
+      }
 
       const updatedBlocks = gridBlocks.map(b => b.id === blockId ? { ...b, x: finalSnapX, y: finalSnapY, layout: { ...b.layout, x: finalSnapX, y: finalSnapY } } : b);
       const resolved = resolveLayout(updatedBlocks, null);
       setGridBlocks(resolved);
+      setSelectedBlockId(blockId);
       setActiveDrag(null);
+      dragStateRef.current = null;
+
+      setAriaLiveMsg(`Block dropped at column ${finalSnapX + 1}, row ${finalSnapY + 1}`);
 
       // Optimistic Auto-Save
       if (!isPublicView && accessToken) {
@@ -493,77 +657,176 @@ export default function BentoView({ isPublic = false }) {
     }
   };
 
-  // Pointer Event Handlers (Resize)
+  // Pointer Event Handlers (8-Handle Precision Resize)
   const handlePointerDownResize = (e, block, direction) => {
     e.preventDefault();
     e.stopPropagation();
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { }
 
-    const gap = 24;
-    const colWidth = (containerWidth + gap) / GRID_COLUMNS;
-    const rowHeight = 160 + gap;
-
-    setActiveResize({
+    const initialResizeState = {
       blockId: block.id,
       direction,
+      pointerId: e.pointerId,
       startPointerX: e.clientX,
       startPointerY: e.clientY,
-      startWidth: block.w * colWidth - gap,
-      startHeight: block.h * rowHeight - gap,
+      initialX: block.x,
+      initialY: block.y,
+      initialW: block.w,
+      initialH: block.h,
+      snapX: block.x,
+      snapY: block.y,
       snapW: block.w,
-      snapH: block.h
-    });
+      snapH: block.h,
+      lastSnapX: block.x,
+      lastSnapY: block.y,
+      lastSnapW: block.w,
+      lastSnapH: block.h
+    };
+
+    setActiveResize(initialResizeState);
+    resizeStateRef.current = initialResizeState;
   };
 
   const handlePointerMoveResize = (e, blockId) => {
-    if (!activeResize || activeResize.blockId !== blockId) return;
+    const aResize = resizeStateRef.current;
+    if (!aResize || aResize.blockId !== blockId) return;
     e.preventDefault();
     e.stopPropagation();
 
-    const dx = e.clientX - activeResize.startPointerX;
-    const dy = e.clientY - activeResize.startPointerY;
-    const gap = 24;
-    const colWidth = (containerWidth + gap) / GRID_COLUMNS;
-    const rowHeight = 160 + gap;
+    const currentPointerX = e.clientX;
+    const currentPointerY = e.clientY;
 
-    const block = gridBlocks.find(b => b.id === blockId);
-    if (!block) return;
+    const activeCols = getActiveColumns(containerWidth);
+    const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols);
 
-    let snapW = block.w;
-    let snapH = block.h;
+    const {
+      direction,
+      startPointerX,
+      startPointerY,
+      initialX,
+      initialY,
+      initialW,
+      initialH,
+      lastSnapX,
+      lastSnapY,
+      lastSnapW,
+      lastSnapH
+    } = aResize;
 
-    if (activeResize.direction.includes('right')) {
-      snapW = Math.round((activeResize.startWidth + dx + gap) / colWidth);
-      snapW = Math.max(1, Math.min(GRID_COLUMNS - block.x, snapW));
+    const dx = currentPointerX - startPointerX;
+    const dy = currentPointerY - startPointerY;
+
+    const floatingDeltaX = dx / colWidth;
+    const floatingDeltaY = dy / rowHeight;
+
+    let snapX = lastSnapX;
+    let snapY = lastSnapY;
+    let snapW = lastSnapW;
+    let snapH = lastSnapH;
+
+    const threshold = 0.55; // 55% cell boundary threshold for resize
+
+    // Right / East
+    if (direction.includes('right')) {
+      const floatingW = initialW + floatingDeltaX;
+      if (floatingW - lastSnapW >= threshold) {
+        snapW = Math.floor(floatingW + (1 - threshold));
+      } else if (lastSnapW - floatingW >= threshold) {
+        snapW = Math.ceil(floatingW - (1 - threshold));
+      } else {
+        snapW = lastSnapW;
+      }
+      snapW = Math.max(1, Math.min(activeCols - initialX, snapW));
     }
-    if (activeResize.direction.includes('bottom')) {
-      snapH = Math.round((activeResize.startHeight + dy + gap) / rowHeight);
+
+    // Left / West
+    if (direction.includes('left')) {
+      const floatingX = initialX + floatingDeltaX;
+      if (lastSnapX - floatingX >= threshold) {
+        snapX = Math.floor(floatingX + (1 - threshold));
+      } else if (floatingX - lastSnapX >= threshold) {
+        snapX = Math.ceil(floatingX - (1 - threshold));
+      } else {
+        snapX = lastSnapX;
+      }
+      snapX = Math.max(0, Math.min(initialX + initialW - 1, snapX));
+      snapW = initialX + initialW - snapX;
+    }
+
+    // Bottom / South
+    if (direction.includes('bottom')) {
+      const floatingH = initialH + floatingDeltaY;
+      if (floatingH - lastSnapH >= threshold) {
+        snapH = Math.floor(floatingH + (1 - threshold));
+      } else if (lastSnapH - floatingH >= threshold) {
+        snapH = Math.ceil(floatingH - (1 - threshold));
+      } else {
+        snapH = lastSnapH;
+      }
       snapH = Math.max(1, snapH);
     }
 
-    setActiveResize(prev => ({ ...prev, snapW, snapH }));
+    // Top / North
+    if (direction.includes('top')) {
+      const floatingY = initialY + floatingDeltaY;
+      if (lastSnapY - floatingY >= threshold) {
+        snapY = Math.floor(floatingY + (1 - threshold));
+      } else if (floatingY - lastSnapY >= threshold) {
+        snapY = Math.ceil(floatingY - (1 - threshold));
+      } else {
+        snapY = lastSnapY;
+      }
+      snapY = Math.max(0, Math.min(initialY + initialH - 1, snapY));
+      snapH = initialY + initialH - snapY;
+    }
 
-    setGridBlocks((prevBlocks) => {
-      const movingBlock = prevBlocks.find(b => b.id === blockId);
-      if (!movingBlock) return prevBlocks;
-      const updated = prevBlocks.map(b => b.id === blockId ? { ...b, w: snapW, h: snapH, layout: { ...b.layout, w: snapW, h: snapH } } : b);
-      return resolveLayout(updated, { ...movingBlock, w: snapW, h: snapH });
-    });
+    // Guard: ONLY trigger resolveLayout when snap dimensions or position actually change!
+    if (snapX !== lastSnapX || snapY !== lastSnapY || snapW !== lastSnapW || snapH !== lastSnapH) {
+      resizeStateRef.current = {
+        ...aResize,
+        snapX,
+        snapY,
+        snapW,
+        snapH,
+        lastSnapX: snapX,
+        lastSnapY: snapY,
+        lastSnapW: snapW,
+        lastSnapH: snapH
+      };
+
+      setActiveResize(resizeStateRef.current);
+
+      setGridBlocks((prevBlocks) => {
+        const movingBlock = prevBlocks.find(b => b.id === blockId);
+        if (!movingBlock) return prevBlocks;
+        const updated = prevBlocks.map(b => b.id === blockId ? { ...b, x: snapX, y: snapY, w: snapW, h: snapH, layout: { ...b.layout, x: snapX, y: snapY, w: snapW, h: snapH } } : b);
+        return resolveLayout(updated, { ...movingBlock, x: snapX, y: snapY, w: snapW, h: snapH });
+      });
+
+      setAriaLiveMsg(`Block resized to ${snapW} wide by ${snapH} high`);
+    }
   };
 
   const handlePointerUpResize = async (e, blockId) => {
-    if (!activeResize || activeResize.blockId !== blockId) return;
+    const aResize = resizeStateRef.current;
+    if (!aResize || aResize.blockId !== blockId) return;
     e.preventDefault();
     e.stopPropagation();
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) { }
 
-    const finalSnapW = activeResize.snapW;
-    const finalSnapH = activeResize.snapH;
+    const finalSnapX = aResize.snapX;
+    const finalSnapY = aResize.snapY;
+    const finalSnapW = aResize.snapW;
+    const finalSnapH = aResize.snapH;
 
-    const updatedBlocks = gridBlocks.map(b => b.id === blockId ? { ...b, w: finalSnapW, h: finalSnapH, layout: { ...b.layout, w: finalSnapW, h: finalSnapH } } : b);
+    const updatedBlocks = gridBlocks.map(b => b.id === blockId ? { ...b, x: finalSnapX, y: finalSnapY, w: finalSnapW, h: finalSnapH, layout: { ...b.layout, x: finalSnapX, y: finalSnapY, w: finalSnapW, h: finalSnapH } } : b);
     const resolved = resolveLayout(updatedBlocks, null);
     setGridBlocks(resolved);
+    setSelectedBlockId(blockId);
     setActiveResize(null);
+    resizeStateRef.current = null;
+
+    setAriaLiveMsg(`Resize completed at ${finalSnapW}x${finalSnapH}`);
 
     // Optimistic Auto-Save
     if (!isPublicView && accessToken) {
@@ -579,6 +842,7 @@ export default function BentoView({ isPublic = false }) {
     }
   };
 
+
   // Dialog Controls
   const openAddDialog = (type) => {
     setIsPickerOpen(false);
@@ -590,7 +854,11 @@ export default function BentoView({ isPublic = false }) {
     setFormHandle('');
     setFormEmoji('😊');
     setFormBgColor('#F8FAFC');
-    setChecklistItems(['', '', '']);
+    setChecklistItems([
+      { id: `chk_1_${Date.now()}`, text: '', completed: false },
+      { id: `chk_2_${Date.now()}`, text: '', completed: false },
+      { id: `chk_3_${Date.now()}`, text: '', completed: false }
+    ]);
   };
 
   const openEditDialog = (block) => {
@@ -604,7 +872,16 @@ export default function BentoView({ isPublic = false }) {
     setFormEmoji(block.configuration?.emoji || '😊');
     setFormBgColor(block.configuration?.bg || '#F8FAFC');
     if (block.blockType === 'checklist' && Array.isArray(block.configuration?.items)) {
-      setChecklistItems(block.configuration.items.map(i => typeof i === 'string' ? i : i.text));
+      setChecklistItems(block.configuration.items.map((i, idx) => {
+        if (typeof i === 'string') {
+          return { id: `chk_${idx}_${Date.now()}`, text: i, completed: false };
+        }
+        return {
+          id: i.id || `chk_${idx}_${Date.now()}`,
+          text: i.text || '',
+          completed: Boolean(i.completed)
+        };
+      }));
     }
   };
 
@@ -638,11 +915,22 @@ export default function BentoView({ isPublic = false }) {
       configObj = { title: formTitle.trim() || 'Text Card', description: formContent.trim() };
       layoutObj = { w: 2, h: 2 };
     } else if (activeDialog === 'checklist') {
-      const items = checklistItems.filter(i => i.trim() !== '').map(text => ({
-        id: Math.random().toString(36).substr(2, 9),
-        text: text.trim(),
-        completed: false
-      }));
+      const items = checklistItems
+        .filter(item => {
+          const txt = typeof item === 'string' ? item : item.text;
+          return txt && txt.trim() !== '';
+        })
+        .map((item, idx) => {
+          if (typeof item === 'string') {
+            return { id: `chk_${idx}_${Date.now()}`, text: item.trim(), completed: false };
+          }
+          return {
+            id: item.id || `chk_${idx}_${Date.now()}`,
+            text: item.text.trim(),
+            completed: Boolean(item.completed)
+          };
+        });
+
       if (items.length === 0) {
         toast('At least one checklist item is required');
         return;
@@ -754,14 +1042,19 @@ export default function BentoView({ isPublic = false }) {
     }
   };
 
-  // Toggle Checklist Item
-  const handleToggleCheckitem = async (block, itemIndex) => {
+  // Toggle Checklist Item (Optimistic UI Update + Persistence + Rollback)
+  const handleToggleCheckitem = async (block, targetItem) => {
     if (isPublicView) return;
+
     const currentItems = block.configuration?.items || [];
+    const targetId = typeof targetItem === 'object' && targetItem !== null ? targetItem.id : null;
+    const targetIdx = typeof targetItem === 'number' ? targetItem : -1;
+
     const updatedItems = currentItems.map((item, idx) => {
-      if (idx === itemIndex) {
+      const isMatch = targetId ? (typeof item === 'object' && item.id === targetId) : idx === targetIdx;
+      if (isMatch) {
         return typeof item === 'string'
-          ? { id: String(idx), text: item, completed: true }
+          ? { id: `chk_${idx}`, text: item, completed: true }
           : { ...item, completed: !item.completed };
       }
       return item;
@@ -772,13 +1065,25 @@ export default function BentoView({ isPublic = false }) {
       configuration: { ...block.configuration, items: updatedItems }
     };
 
+    // Store snapshot for rollback if API fails
+    const previousBlocks = gridBlocks;
+
+    // 1. Optimistic Update immediately in UI
     setGridBlocks(prev => prev.map(b => b.id === block.id ? updatedBlock : b));
 
+    // 2. Async persistence to MongoDB
     if (accessToken) {
       try {
-        await updateBlockApi(block.id, { configuration: { ...block.configuration, items: updatedItems } }, accessToken);
+        const res = await updateBlockApi(block.id, { configuration: { ...block.configuration, items: updatedItems } }, accessToken);
+        if (res && res.success === false) {
+          console.error('[Checklist Update Failed] Reverting state');
+          setGridBlocks(previousBlocks);
+          toast(res.message || 'Failed to save checklist state');
+        }
       } catch (err) {
-        console.error('Failed to update checklist item:', err);
+        console.error('[Checklist Update Error]', err);
+        setGridBlocks(previousBlocks);
+        toast('Failed to save checklist state');
       }
     }
   };
@@ -808,9 +1113,17 @@ export default function BentoView({ isPublic = false }) {
   const name = userObj?.fullName || profileObj?.username || targetUsername || 'User';
   const bio = profileObj?.bio || 'Welcome to my Bento Profile!';
 
+  const isOwner = Boolean(
+    authUser && (
+      (!isPublicView) ||
+      (authUser._id && profileObj?.userId && String(authUser._id) === String(profileObj.userId)) ||
+      (authUser.username && targetUsername && authUser.username.toLowerCase() === targetUsername.toLowerCase())
+    )
+  );
+
   return (
     <div style={{ minHeight: '100vh', background: '#F8FAFC', paddingBottom: 60, fontFamily: 'Inter, sans-serif', color: '#1E293B' }}>
-      
+
       {/* Header Bar */}
       <header style={{ height: 70, borderBottom: '1px solid #E2E8F0', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px', position: 'sticky', top: 0, zIndex: 100 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -820,28 +1133,40 @@ export default function BentoView({ isPublic = false }) {
           <span style={{ fontSize: '0.85rem', background: '#EEF2FF', color: '#4F46E5', padding: '2px 8px', borderRadius: 12, fontWeight: 700 }}>Bento</span>
         </div>
 
-        {!isPublicView && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {isOwner && (
             <button
-              onClick={() => setIsPickerOpen(true)}
-              style={{ background: 'linear-gradient(135deg, #4F46E5, #6366F1)', color: '#FFFFFF', border: 'none', padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 14px rgba(79,70,229,0.3)' }}
+              onClick={() => navigate('/dashboard')}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#EEF2FF', color: '#4F46E5', border: '1px solid #C7D2FE', padding: '8px 14px', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.15s' }}
             >
-              <span style={{ fontSize: '1.2rem' }}>+</span> Add Block
+              <LayoutDashboard size={16} />
+              <span>Dashboard</span>
             </button>
+          )}
 
-            <button
-              onClick={() => window.open(`/${profileObj.username || authUser?.username}`, '_blank')}
-              style={{ background: '#F1F5F9', color: '#334155', border: '1px solid #CBD5E1', padding: '10px 16px', borderRadius: 10, fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
-            >
-              Public Link ↗
-            </button>
-          </div>
-        )}
+          {!isPublicView && (
+            <>
+              <button
+                onClick={() => setIsPickerOpen(true)}
+                style={{ background: 'linear-gradient(135deg, #4F46E5, #6366F1)', color: '#FFFFFF', border: 'none', padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 14px rgba(79,70,229,0.3)' }}
+              >
+                <span style={{ fontSize: '1.2rem' }}>+</span> Add Block
+              </button>
+
+              <button
+                onClick={() => window.open(`/${profileObj.username || authUser?.username}`, '_blank')}
+                style={{ background: '#F1F5F9', color: '#334155', border: '1px solid #CBD5E1', padding: '10px 16px', borderRadius: 10, fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
+              >
+                Public Link ↗
+              </button>
+            </>
+          )}
+        </div>
       </header>
 
       {/* Main Profile Container */}
       <main style={{ maxWidth: 1080, margin: '40px auto 0', padding: '0 24px' }}>
-        
+
         {/* Profile Card Header — Centered Hero Layout */}
         <section
           className="bento-hero-header"
@@ -861,7 +1186,7 @@ export default function BentoView({ isPublic = false }) {
           }}
         >
           {/* Floating Add Block Button in Top-Right Corner */}
-          
+
 
           {/* Centered Large Profile Avatar Ring */}
           <div
@@ -947,16 +1272,15 @@ export default function BentoView({ isPublic = false }) {
 
         {/* Bento Grid */}
         <div ref={containerRef} style={{ position: 'relative', minHeight: 400, width: '100%' }}>
-          {/* Snap Drag/Resize Translucent Ghost Preview Overlay */}
-          {(activeDrag || activeResize) && (() => {
-            const targetX = activeDrag ? activeDrag.snapX : (gridBlocks.find(b => b.id === activeResize.blockId)?.x || 0);
-            const targetY = activeDrag ? activeDrag.snapY : (gridBlocks.find(b => b.id === activeResize.blockId)?.y || 0);
-            const targetW = activeDrag ? activeDrag.w : activeResize.snapW;
-            const targetH = activeDrag ? activeDrag.h : activeResize.snapH;
+          {/* Resize Dimension Readout Badge Overlay */}
+          {activeResize && (() => {
+            const targetX = activeResize.snapX;
+            const targetY = activeResize.snapY;
+            const targetW = activeResize.snapW;
+            const targetH = activeResize.snapH;
 
-            const gap = 24;
-            const colWidth = containerWidth > 0 ? (containerWidth + gap) / GRID_COLUMNS : 240;
-            const rowHeight = 160 + gap;
+            const activeCols = getActiveColumns(containerWidth);
+            const { colWidth, rowHeight, gap } = getGridDimensions(containerWidth, activeCols);
 
             return (
               <div
@@ -967,18 +1291,14 @@ export default function BentoView({ isPublic = false }) {
                   top: `${targetY * rowHeight}px`,
                   width: `${targetW * colWidth - gap}px`,
                   height: `${targetH * rowHeight - gap}px`,
-                  background: 'rgba(99, 102, 241, 0.12)',
-                  border: '2px dashed #6366F1',
-                  borderRadius: 18,
-                  zIndex: 5,
                   pointerEvents: 'none',
+                  zIndex: 5,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#4F46E5',
                   fontWeight: 800,
-                  fontSize: '0.9rem',
-                  transition: 'all 0.1s ease-out'
+                  fontSize: '0.9rem'
                 }}
               >
                 {targetW} × {targetH}
@@ -1002,16 +1322,18 @@ export default function BentoView({ isPublic = false }) {
             </div>
           ) : (
             gridBlocks.map((block, idx) => {
-              const gap = 24;
-              const colWidth = containerWidth > 0 ? (containerWidth + gap) / GRID_COLUMNS : 240;
-              const rowHeight = 160 + gap;
+              const activeCols = getActiveColumns(containerWidth);
+              const { colWidth, rowHeight, gap } = getGridDimensions(containerWidth, activeCols);
 
               const isDragging = draggedBlockId === block.id;
               const isSelected = selectedBlockId === block.id;
-              const left = block.x * colWidth;
-              const top = block.y * rowHeight;
+              const blockX = isDragging && activeDrag ? activeDrag.originalX : block.x;
+              const blockY = isDragging && activeDrag ? activeDrag.originalY : block.y;
+              const left = blockX * colWidth;
+              const top = blockY * rowHeight;
               const width = block.w * colWidth - gap;
               const height = block.h * rowHeight - gap;
+
 
               const config = block.configuration || {};
 
@@ -1040,85 +1362,50 @@ export default function BentoView({ isPublic = false }) {
                     flexDirection: 'column',
                     justifyContent: 'space-between',
                     overflow: 'hidden',
-                    cursor: !isPublicView && !block.locked ? 'grab' : 'default',
-                    opacity: block.visibility === false ? 0.6 : 1,
+                    cursor: !isPublicView ? 'grab' : 'default',
                     userSelect: 'none'
                   }}
                 >
-                  {/* Status Badges for Owner View */}
-                  {!isPublicView && (
-                    <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 6, zIndex: 12, pointerEvents: 'none' }}>
-                      {block.visibility === false && (
-                        <span style={{ fontSize: '0.7rem', background: '#FEF2F2', color: '#EF4444', border: '1px solid #FCA5A5', padding: '1px 6px', borderRadius: 6, fontWeight: 700 }}>
-                          👁️ Hidden
-                        </span>
-                      )}
-                      {block.locked && (
-                        <span style={{ fontSize: '0.7rem', background: '#F1F5F9', color: '#475569', border: '1px solid #CBD5E1', padding: '1px 6px', borderRadius: 6, fontWeight: 700 }}>
-                          🔒 Locked
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Floating Action Toolbar (Section 11 Specification) */}
+                  {/* Floating Action Toolbar (Strictly Edit, Duplicate, Delete) */}
                   {!isPublicView && isSelected && (
                     <div
                       className="bento-floating-toolbar"
                       onClick={(e) => e.stopPropagation()}
                       style={{
                         position: 'absolute',
-                        top: 12,
+                        top: block.y === 0 ? 10 : -44,
                         left: '50%',
                         transform: 'translateX(-50%)',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 4,
+                        gap: 6,
                         background: '#0F172A',
-                        padding: '4px 10px',
+                        color: '#F8FAFC',
+                        border: '1px solid #334155',
+                        padding: '6px 14px',
                         borderRadius: 20,
-                        boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
-                        zIndex: 30
+                        boxShadow: 'none',
+                        zIndex: 40,
+                        whiteSpace: 'nowrap'
                       }}
                     >
                       <button
                         onClick={(e) => { e.stopPropagation(); openEditDialog(block); }}
-                        style={{ background: 'none', border: 'none', color: '#F8FAFC', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', padding: '3px 5px', display: 'flex', alignItems: 'center', gap: 4 }}
+                        style={{ background: 'none', border: 'none', color: '#F8FAFC', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', padding: '3px 6px', display: 'flex', alignItems: 'center', gap: 4 }}
                         title="Edit Block (E)"
                       >
                         ✏️ Edit
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDuplicateBlock(block); }}
-                        style={{ background: 'none', border: 'none', color: '#F8FAFC', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', padding: '3px 5px', display: 'flex', alignItems: 'center', gap: 4 }}
+                        style={{ background: 'none', border: 'none', color: '#F8FAFC', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', padding: '3px 6px', display: 'flex', alignItems: 'center', gap: 4 }}
                         title="Duplicate Block (D)"
                       >
                         📋 Duplicate
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleToggleVisibility(block); }}
-                        style={{ background: 'none', border: 'none', color: '#F8FAFC', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', padding: '3px 5px', display: 'flex', alignItems: 'center', gap: 4 }}
-                        title="Toggle Visibility (H)"
-                      >
-                        {block.visibility === false ? '👁️ Restore' : '👁️ Hide'}
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleToggleLock(block); }}
-                        style={{ background: 'none', border: 'none', color: '#F8FAFC', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', padding: '3px 5px', display: 'flex', alignItems: 'center', gap: 4 }}
-                        title="Toggle Lock (L)"
-                      >
-                        {block.locked ? '🔓 Unlock' : '🔒 Lock'}
-                      </button>
-                      <button
-                        onClick={(e) => cycleBgColor(e, block)}
-                        style={{ background: 'none', border: 'none', color: '#F8FAFC', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', padding: '3px 5px', display: 'flex', alignItems: 'center', gap: 4 }}
-                        title="Cycle Card Style Palette"
-                      >
-                        🎨 Style
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); if (!block.locked) handleDeleteBlock(block.id); else toast('🔒 Locked block cannot be deleted'); }}
-                        style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', padding: '3px 5px', display: 'flex', alignItems: 'center', gap: 4 }}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteBlock(block.id); }}
+                        style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', padding: '3px 6px', display: 'flex', alignItems: 'center', gap: 4 }}
                         title="Delete Block (Del)"
                       >
                         🗑️ Delete
@@ -1148,7 +1435,7 @@ export default function BentoView({ isPublic = false }) {
                           justifyContent: 'center',
                           fontSize: '0.9rem',
                           zIndex: 20,
-                          boxShadow: '0 2px 8px rgba(239,68,68,0.2)'
+                          boxShadow: 'none'
                         }}
                         title="Delete Block"
                       >
@@ -1174,7 +1461,7 @@ export default function BentoView({ isPublic = false }) {
                           justifyContent: 'center',
                           fontSize: '0.9rem',
                           zIndex: 20,
-                          boxShadow: '0 2px 8px rgba(79,70,229,0.2)'
+                          boxShadow: 'none'
                         }}
                         title="Edit Block"
                       >
@@ -1192,25 +1479,32 @@ export default function BentoView({ isPublic = false }) {
                   )}
 
                   {/* Link Card */}
-                  {block.blockType === 'link' && (
-                    <a
-                      href={config.url || '#'}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100%' }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: '1.5rem' }}>🔗</span>
-                        <h4 style={{ margin: 0, fontWeight: 700, fontSize: '1.1rem', color: '#0F172A' }}>{config.title || 'Link'}</h4>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#4F46E5', fontWeight: 600, fontSize: '0.85rem' }}>
-                        <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '80%' }}>
-                          {config.url}
-                        </span>
-                        <span className="bento-link-arrow" style={{ display: 'inline-block', fontSize: '1rem', fontWeight: 800 }}>↗</span>
-                      </div>
-                    </a>
-                  )}
+                  {block.blockType === 'link' && (() => {
+                    const rawUrl = config.url || '';
+                    const hrefUrl = rawUrl ? (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : `https://${rawUrl}`) : '#';
+
+                    return (
+                      <a
+                        href={hrefUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100%', cursor: 'pointer' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ fontSize: '1.5rem' }}>🔗</span>
+                          <h4 style={{ margin: 0, fontWeight: 700, fontSize: '1.1rem', color: '#0F172A' }}>{config.title || 'Link'}</h4>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#4F46E5', fontWeight: 600, fontSize: '0.85rem' }}>
+                          <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '80%' }}>
+                            {rawUrl}
+                          </span>
+                          <span className="bento-link-arrow" style={{ display: 'inline-block', fontSize: '1rem', fontWeight: 800 }}>↗</span>
+                        </div>
+                      </a>
+                    );
+                  })()}
 
                   {/* Text Card */}
                   {block.blockType === 'text' && (
@@ -1223,30 +1517,79 @@ export default function BentoView({ isPublic = false }) {
                   )}
 
                   {/* Checklist Card */}
-                  {block.blockType === 'checklist' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                      <h4 style={{ margin: '0 0 12px', fontWeight: 700, fontSize: '1.05rem', color: '#0F172A' }}>{config.title || 'Checklist'}</h4>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', flexGrow: 1 }}>
-                        {(config.items || []).map((item, itemIdx) => {
-                          const itemText = typeof item === 'string' ? item : item.text;
-                          const isCompleted = typeof item === 'object' && item.completed;
-                          return (
-                            <div key={itemIdx} className="bento-checklist-item" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <input
-                                type="checkbox"
-                                checked={isCompleted}
-                                onChange={() => handleToggleCheckitem(block, itemIdx)}
-                                style={{ width: 18, height: 18, accentColor: '#4F46E5', cursor: 'pointer' }}
-                              />
-                              <span style={{ fontSize: '0.9rem', color: isCompleted ? '#94A3B8' : '#334155', textDecoration: isCompleted ? 'line-through' : 'none', transition: 'all 0.2s ease' }}>
-                                {itemText}
+                  {block.blockType === 'checklist' && (() => {
+                    const items = config.items || [];
+                    const totalCount = items.length;
+                    const completedCount = items.filter(i => (typeof i === 'object' ? i.completed : false)).length;
+                    const progressPct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+                    return (
+                      <div
+                        style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          {/* Title & Stats */}
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                            <h4 style={{ margin: 0, fontWeight: 700, fontSize: '1.05rem', color: '#0F172A' }}>
+                              {config.title || 'Checklist'}
+                            </h4>
+                            {totalCount > 0 && (
+                              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#64748B' }}>
+                                {completedCount} / {totalCount} ({progressPct}%)
                               </span>
+                            )}
+                          </div>
+
+                          {/* Dynamic Progress Bar */}
+                          {totalCount > 0 && (
+                            <div className="bento-checklist-progress-bar-bg">
+                              <div
+                                className="bento-checklist-progress-bar-fill"
+                                style={{ width: `${progressPct}%` }}
+                              />
                             </div>
-                          );
-                        })}
+                          )}
+                        </div>
+
+                        {/* Items List */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, overflowY: 'auto', flexGrow: 1, marginTop: 10, paddingRight: 2 }}>
+                          {items.map((item, itemIdx) => {
+                            const itemText = typeof item === 'string' ? item : item.text;
+                            const isCompleted = typeof item === 'object' && Boolean(item.completed);
+                            const itemId = (typeof item === 'object' && item.id) ? item.id : `chk_${itemIdx}`;
+
+                            return (
+                              <label
+                                key={itemId}
+                                className="bento-checklist-item"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!isPublicView) {
+                                    handleToggleCheckitem(block, item);
+                                  }
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="bento-checklist-checkbox"
+                                  checked={isCompleted}
+                                  onChange={() => {}}
+                                  disabled={isPublicView}
+                                  aria-label={itemText}
+                                />
+                                <span className={`bento-checklist-text ${isCompleted ? 'is-completed' : ''}`}>
+                                  {itemText}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Image Card */}
                   {block.blockType === 'image' && (
@@ -1277,29 +1620,58 @@ export default function BentoView({ isPublic = false }) {
                     );
                   })()}
 
-                  {/* Resize Handles */}
+                  {/* 8 Precision Resize Handles */}
                   {!isPublicView && !block.locked && (
                     <>
+                      {/* Edge Handles */}
                       <div
-                        className="bento-card-resize-handle right"
-                        onPointerDown={(e) => handlePointerDownResize(e, block, 'right')}
+                        className="bento-card-resize-handle top"
+                        onPointerDown={(e) => handlePointerDownResize(e, block, 'top')}
                         onPointerMove={(e) => handlePointerMoveResize(e, block.id)}
                         onPointerUp={(e) => handlePointerUpResize(e, block.id)}
-                        style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 10, cursor: 'ew-resize', zIndex: 15 }}
                       />
                       <div
                         className="bento-card-resize-handle bottom"
                         onPointerDown={(e) => handlePointerDownResize(e, block, 'bottom')}
                         onPointerMove={(e) => handlePointerMoveResize(e, block.id)}
                         onPointerUp={(e) => handlePointerUpResize(e, block.id)}
-                        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 10, cursor: 'ns-resize', zIndex: 15 }}
                       />
                       <div
-                        className="bento-card-resize-handle corner"
-                        onPointerDown={(e) => handlePointerDownResize(e, block, 'right-bottom')}
+                        className="bento-card-resize-handle left"
+                        onPointerDown={(e) => handlePointerDownResize(e, block, 'left')}
                         onPointerMove={(e) => handlePointerMoveResize(e, block.id)}
                         onPointerUp={(e) => handlePointerUpResize(e, block.id)}
-                        style={{ position: 'absolute', right: 0, bottom: 0, width: 14, height: 14, cursor: 'nwse-resize', zIndex: 16 }}
+                      />
+                      <div
+                        className="bento-card-resize-handle right"
+                        onPointerDown={(e) => handlePointerDownResize(e, block, 'right')}
+                        onPointerMove={(e) => handlePointerMoveResize(e, block.id)}
+                        onPointerUp={(e) => handlePointerUpResize(e, block.id)}
+                      />
+                      {/* Corner Handles */}
+                      <div
+                        className="bento-card-resize-handle top-left"
+                        onPointerDown={(e) => handlePointerDownResize(e, block, 'top-left')}
+                        onPointerMove={(e) => handlePointerMoveResize(e, block.id)}
+                        onPointerUp={(e) => handlePointerUpResize(e, block.id)}
+                      />
+                      <div
+                        className="bento-card-resize-handle top-right"
+                        onPointerDown={(e) => handlePointerDownResize(e, block, 'top-right')}
+                        onPointerMove={(e) => handlePointerMoveResize(e, block.id)}
+                        onPointerUp={(e) => handlePointerUpResize(e, block.id)}
+                      />
+                      <div
+                        className="bento-card-resize-handle bottom-left"
+                        onPointerDown={(e) => handlePointerDownResize(e, block, 'bottom-left')}
+                        onPointerMove={(e) => handlePointerMoveResize(e, block.id)}
+                        onPointerUp={(e) => handlePointerUpResize(e, block.id)}
+                      />
+                      <div
+                        className="bento-card-resize-handle bottom-right"
+                        onPointerDown={(e) => handlePointerDownResize(e, block, 'bottom-right')}
+                        onPointerMove={(e) => handlePointerMoveResize(e, block.id)}
+                        onPointerUp={(e) => handlePointerUpResize(e, block.id)}
                       />
                     </>
                   )}
@@ -1309,6 +1681,11 @@ export default function BentoView({ isPublic = false }) {
           )}
         </div>
       </main>
+
+      {/* Screen Reader ARIA Live Region */}
+      <div className="sr-only" aria-live="polite">
+        {ariaLiveMsg}
+      </div>
 
       {/* Add Block Modal Picker (EXACTLY 10 SUPPORTED OPTIONS) */}
       {isPickerOpen && (
@@ -1324,28 +1701,37 @@ export default function BentoView({ isPublic = false }) {
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 16 }}>
               {[
-                { type: 'emoji', icon: '😊', label: 'Emoji' },
-                { type: 'link', icon: '🔗', label: 'Link' },
-                { type: 'text', icon: 'Ｔ', label: 'Text' },
-                { type: 'checklist', icon: '📋', label: 'Checklist' },
-                { type: 'image', icon: '🖼️', label: 'Image Card' },
-                { type: 'instagram', icon: '📸', label: 'Instagram' },
-                { type: 'github', icon: '💻', label: 'GitHub' },
-                { type: 'youtube', icon: '🎥', label: 'YouTube' },
-                { type: 'twitter', icon: '🐦', label: 'Twitter / X' },
-                { type: 'linkedin', icon: '👥', label: 'LinkedIn' }
-              ].map((item) => (
-                <div
-                  key={item.type}
-                  onClick={() => openAddDialog(item.type)}
-                  style={{ background: '#F8FAFC', borderRadius: 16, padding: 18, border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s ease' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#6366F1'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.transform = 'none'; }}
-                >
-                  <span style={{ fontSize: '2.2rem', marginBottom: 8 }}>{item.icon}</span>
-                  <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1E293B' }}>{item.label}</span>
-                </div>
-              ))}
+                { type: 'emoji', isSocial: false, icon: '😊', label: 'Emoji' },
+                { type: 'link', isSocial: false, icon: '🔗', label: 'Link' },
+                { type: 'text', isSocial: false, icon: 'Ｔ', label: 'Text' },
+                { type: 'checklist', isSocial: false, icon: '📋', label: 'Checklist' },
+                { type: 'image', isSocial: false, icon: '🖼️', label: 'Image Card' },
+                { type: 'instagram', isSocial: true, label: 'Instagram' },
+                { type: 'github', isSocial: true, label: 'GitHub' },
+                { type: 'youtube', isSocial: true, label: 'YouTube' },
+                { type: 'twitter', isSocial: true, label: 'Twitter / X' },
+                { type: 'linkedin', isSocial: true, label: 'LinkedIn' }
+              ].map((item) => {
+                const brandColor = item.isSocial ? getSocialBrandColor(item.type) : '#4F46E5';
+                return (
+                  <div
+                    key={item.type}
+                    onClick={() => openAddDialog(item.type)}
+                    style={{ background: '#F8FAFC', borderRadius: 16, padding: 18, border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = brandColor; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.transform = 'none'; }}
+                  >
+                    <div style={{ width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                      {item.isSocial ? (
+                        getSocialIcon(item.type, 36, brandColor)
+                      ) : (
+                        <span style={{ fontSize: '2.2rem' }}>{item.icon}</span>
+                      )}
+                    </div>
+                    <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#1E293B' }}>{item.label}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1414,34 +1800,44 @@ export default function BentoView({ isPublic = false }) {
                   </div>
                   <div>
                     <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: 6 }}>Checklist Items</label>
-                    {checklistItems.map((item, idx) => (
-                      <div key={idx} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                        <input
-                          type="text"
-                          value={item}
-                          onChange={(e) => {
-                            const newItems = [...checklistItems];
-                            newItems[idx] = e.target.value;
-                            setChecklistItems(newItems);
-                          }}
-                          placeholder={`Item ${idx + 1}`}
-                          style={{ flexGrow: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: '0.9rem' }}
-                        />
-                        {checklistItems.length > 1 && (
-                          <button
-                            onClick={() => setChecklistItems(checklistItems.filter((_, i) => i !== idx))}
-                            style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#EF4444', borderRadius: 8, padding: '0 10px', cursor: 'pointer' }}
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                    {checklistItems.map((item, idx) => {
+                      const textVal = typeof item === 'string' ? item : item.text;
+                      return (
+                        <div key={(typeof item === 'object' && item.id) ? item.id : idx} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                          <input
+                            type="text"
+                            value={textVal}
+                            onChange={(e) => {
+                              const newItems = [...checklistItems];
+                              if (typeof newItems[idx] === 'string') {
+                                newItems[idx] = { id: `chk_${idx}_${Date.now()}`, text: e.target.value, completed: false };
+                              } else {
+                                newItems[idx] = { ...newItems[idx], text: e.target.value };
+                              }
+                              setChecklistItems(newItems);
+                            }}
+                            placeholder={`Task ${idx + 1}`}
+                            style={{ flexGrow: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid #CBD5E1', fontSize: '0.9rem' }}
+                          />
+                          {checklistItems.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setChecklistItems(checklistItems.filter((_, i) => i !== idx))}
+                              style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#EF4444', borderRadius: 8, width: 34, height: 34, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem' }}
+                              title="Remove item"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                     <button
-                      onClick={() => setChecklistItems([...checklistItems, ''])}
-                      style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#4F46E5', borderRadius: 8, padding: '6px 12px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', marginTop: 4 }}
+                      type="button"
+                      onClick={() => setChecklistItems([...checklistItems, { id: `chk_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, text: '', completed: false }])}
+                      style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#4F46E5', borderRadius: 8, padding: '6px 14px', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', marginTop: 4 }}
                     >
-                      + Add Item
+                      + Add Task
                     </button>
                   </div>
                 </>

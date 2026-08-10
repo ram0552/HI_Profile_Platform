@@ -105,6 +105,7 @@ const getTwitterProfile = async (rawUsername) => {
                 id: tweet.id,
                 text: tweetText,
                 imageUrl: primaryMediaUrl,
+                thumbnailUrl: primaryMediaUrl,
                 allMediaUrls: allMediaUrls,
                 likesCount: tweet.likeCount || 0,
                 repliesCount: tweet.replyCount || 0,

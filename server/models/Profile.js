@@ -31,6 +31,7 @@ const socialLinksSchema = new mongoose.Schema({
     discord: { type: String, default: '', trim: true },
     telegram: { type: String, default: '', trim: true },
     dribbble: { type: String, default: '', trim: true },
+    location: { type: String, default: '', trim: true },
     customLinks: [{
         label: { type: String, trim: true },
         url: { type: String, trim: true }
@@ -83,6 +84,11 @@ const profileSchema = new mongoose.Schema({
         default: '',
         trim: true,
         maxlength: 500
+    },
+    location: {
+        type: String,
+        default: '',
+        trim: true
     },
     socialLinks: {
         type: socialLinksSchema,

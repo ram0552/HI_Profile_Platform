@@ -1,0 +1,109 @@
+# Final Master Implementation Plan — Hi-Profile Bento Grid Spatial Editor
+
+Stabilize and elevate the existing Hi-Profile Bento page into a spatial, production-grade grid editor. The mathematical **Grid Engine** is the highest-priority foundation: all layout interactions (drag, 8-handle resize, placement, collision reflow, vertical compaction, breakpoint column clamping) will be mathematically sound before building the interaction layer and visual polish.
+
+## User Review Required
+
+> [!IMPORTANT]
+> - **Grid Engine Highest Priority**: All layout operations (placement, drag, 8-handle resize, collision pushing, vertical compaction, responsive column clamping) operate on the mathematical layout state `{ x, y, w, h }` as the single source of truth.
+> - **Responsive Layout Clamping (4 / 2 / 1 Columns)**: When breakpoint changes (Desktop 4 cols → Tablet 2 cols → Mobile 1 col), block widths and positions are dynamically clamped (`w = Math.min(w, activeCols)`, `x = Math.min(x, activeCols - w)`), resolved for collisions, and vertically compacted.
+> - **Strict 10 Block Types**: `Emoji`, `Link`, `Text`, `Checklist`, `Image`, `Instagram`, `GitHub`, `YouTube`, `Twitter/X`, and `LinkedIn`. No unsupported block types or external widgets will be added.
+> - **No Drag/Resize API Spam**: Pointer interactions modify local layout state in real-time. Persistence is debounced by 800ms after the pointer settles, maintaining high UI frame rates.
+
+## Open Questions
+
+> [!NOTE]
+> None. All architecture constraints, backend integrations, and step-by-step execution phases are fully defined and ready for execution.
+
+---
+
+## Step-by-Step Execution Plan
+
+### Phase 1 — Mathematical Grid Engine (`client/src/utils/bentoGrid.js`)
+
+#### [MODIFY] [bentoGrid.js](file:///d:/MERN2/Hi-Profile-main/client/src/utils/bentoGrid.js)
+1. **Default Dimensions**: Update `getDefaultBlockSize` to return `{ w: 2, h: 1 }` for all newly created blocks.
+2. **First Available Position**: Implement `findFirstAvailablePosition(blocks, w = 2, h = 1, maxCols = 4)` scanning from row 0, column 0 left-to-right to place new blocks into open slots.
+3. **Collision Detection & Reflow**:
+   - `collides(a, b)`: Deterministic overlap check (`a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y`).
+   - `resolveLayout(blocks, movingBlock)`: Pushes colliding blocks down while treating `locked: true` blocks as unmovable obstacles.
+   - `compactLayout(blocks)`: Removes empty vertical gaps by shifting blocks upward to `y = 0` or until colliding.
+4. **8-Handle Resize Engine**:
+   - Implement `calculateHandleResizeDelta(handle, initialLayout, deltaX, deltaY, cellWidth, cellHeight, activeCols)` for handles `NW`, `N`, `NE`, `E`, `SE`, `S`, `SW`, `W`.
+   - Clamp bounds: `1 <= w <= activeCols`, `1 <= h <= 6`, `x >= 0`, `y >= 0`, `x + w <= activeCols`.
+5. **Responsive Column Clamping**:
+   - Implement `clampLayoutForBreakpoint(blocks, activeCols)`:
+     - Clamp `w = Math.max(1, Math.min(b.w, activeCols))`.
+     - Clamp `x = Math.max(0, Math.min(b.x, activeCols - w))`.
+     - Run `resolveLayout` and `compactLayout`.
+
+---
+
+### Phase 2 — Interaction Layer & Contextual UI (`client/src/pages/BentoView.jsx`)
+
+#### [MODIFY] [BentoView.jsx](file:///d:/MERN2/Hi-Profile-main/client/src/pages/BentoView.jsx)
+1. **Selection & Deselect**:
+   - Single active selected block state (`selectedBlockId`).
+   - Click empty canvas background or press `Escape` key to deselect.
+2. **Live Pointer Drag & 8-Handle Resize**:
+   - Attach pointer listeners (`pointerdown`, `pointermove`, `pointerup`) to block handles and drag bars.
+   - Live grid snapping, dimension badge overlay (`2 × 1`, `3 × 2`), and continuous animated sibling reflow.
+3. **Contextual Hover Toolbar & Delete Control**:
+   - 100ms hover delay-in / instant exit with viewport clipping flip detection (bottom-center → top-center if clipped).
+   - Controls: **Edit**, **Duplicate**, **Move**, **Hide** (visibility toggle), **Lock** toggle.
+   - Separate top-left **Delete (Trash)** control (visually distinct, red destructive accent).
+4. **Floating Add Block Dock**:
+   - Floating pill fixed at bottom-center (`+ Add Block`).
+   - Opens menu for Hi-Profile's 10 supported block types.
+   - Instantly places default `2 × 1` block via `findFirstAvailablePosition()` without full page reload.
+
+---
+
+### Phase 3 — Persistence & Backend Sync
+
+#### [MODIFY] [bentoApi.js](file:///d:/MERN2/Hi-Profile-main/client/src/services/bentoApi.js)
+#### [MODIFY] [blockController.js](file:///d:/MERN2/Hi-Profile-main/server/controllers/blockController.js)
+1. **Optimistic 800ms Debounced Persistence**:
+   - Local state updates instantly on drag/resize settle.
+   - Autosave debounces 800ms before sending bulk reorder/update API request to server.
+   - Top bar indicator displays `Saving...` → `Saved ✓`.
+   - On network failure, rolls back UI to last confirmed server state and shows error toast.
+2. **Backend Validation**:
+   - Validate `1 <= w <= 4`, `1 <= h <= 6`, `x >= 0`, `y >= 0`, `locked`, and `visibility`.
+
+---
+
+### Phase 4 — Visual Polish, Container Queries & Error Isolation
+
+#### [MODIFY] Block UI Components & Styling
+1. **Container Queries (`@container`)**:
+   - Add `container-type: inline-size` to block cards.
+   - Content scales gracefully (Large Card → Medium Pill → Small Icon) for `LinkBlock`, `SocialBentoBlock`, `EmojiBlock`, `ChecklistBlock`, `ImageBlock`, `TextBlock`.
+2. **Normalized Social Profile Integration**:
+   - Social blocks (Instagram, GitHub, YouTube, Twitter/X, LinkedIn) consume MongoDB normalized `SocialProfile` data (`recentContent`, avatar, stats) without calling Apify on frontend.
+3. **Isolated Error Boundaries**:
+   - Wrap each block in a React Error Boundary (`SocialErrorState` / fallback card) so single block loading or network failures never break the Bento canvas.
+4. **Keyboard & Accessibility**:
+   - Support `Tab` key focus, `Enter` key to edit, `Escape` to deselect, and `Delete`/`Backspace` to delete selected block.
+
+---
+
+## Verification Plan
+
+### Automated Verification
+- Run backend (`npm run dev` in `server`) and client (`npm run dev` in `client`) to verify clean startup and zero linting/compilation errors.
+- Test CRUD API endpoints for block creation, layout update, and deletion.
+
+### Manual Verification
+1. **Phase 1 (Grid Engine)**:
+   - Add new block → verify default `w: 2, h: 1` placed at first open grid slot.
+   - Drag block into occupied cell → verify deterministic collision push & vertical compaction.
+   - Resize block using all 8 handles (`NW`, `N`, `NE`, `E`, `SE`, `S`, `SW`, `W`) → verify live dimension badge (`2 × 1` → `3 × 2`) and grid snapping.
+   - Locked block → verify it acts as an immovable obstacle during neighbor movements.
+2. **Phase 2 (Responsive & Interaction)**:
+   - Resize browser window (Desktop 4 cols → Tablet 2 cols → Mobile 1 col) → verify layouts clamp (`w <= activeCols`), re-compact, and refrain from overflowing horizontally.
+   - Hover over block → verify 100ms toolbar delay, viewport clipping flip, and top-left Delete button.
+3. **Phase 3 (Persistence & Social)**:
+   - Perform edits/drags → verify header shows `Saving...` → `Saved ✓` with 800ms debounce (zero API calls during pointer movement).
+   - Check social blocks → verify normalized `recentContent` renders correctly from MongoDB.
+   - Break one block image/data → verify remaining blocks remain 100% interactive.

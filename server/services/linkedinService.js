@@ -3,7 +3,7 @@ const { ApifyClient } = require('apify-client');
 const normalizeLinkedInUsername = (input) => {
     let username = input.trim();
     if (!username) return '';
-    
+
     // If it is a full URL
     if (username.startsWith('http://') || username.startsWith('https://')) {
         try {
@@ -33,7 +33,7 @@ const normalizeLinkedInUsername = (input) => {
         // Strip trailing slash
         username = username.split('/')[0];
     }
-    
+
     // Strip query params and hash
     username = username.split('?')[0].split('#')[0].trim();
     return username;
@@ -65,7 +65,7 @@ const getLinkedInProfile = async (rawUsername) => {
 
     console.log(`[Apify LinkedIn Scraper] Runs inited. Profile Run ID: "${profileRun.id}", Posts Run ID: "${postsRun.id}"`);
 
-    const [ { items: profileItems }, { items: postItems } ] = await Promise.all([
+    const [{ items: profileItems }, { items: postItems }] = await Promise.all([
         client.dataset(profileRun.defaultDatasetId).listItems(),
         client.dataset(postsRun.defaultDatasetId).listItems()
     ]);
@@ -81,9 +81,15 @@ const getLinkedInProfile = async (rawUsername) => {
         throw new Error(profileObj.error || 'Failed to retrieve LinkedIn profile data');
     }
 
-    const fullName = profileObj.fullName || `${profileObj.firstName || ''} ${profileObj.lastName || ''}`.trim() || username;
+    const basicInfo = profileObj.basicInfo || profileObj;
+
+    const fullName = profileObj.fullName || basicInfo.fullName || `${basicInfo.firstName || profileObj.firstName || ''} ${basicInfo.lastName || profileObj.lastName || ''}`.trim() || username;
     const profilePicture =
+        basicInfo.profile_picture_url ||
+        basicInfo.profile_picture ||
+        basicInfo.profilePicUrl ||
         profileObj.profilePictureUrl ||
+        profileObj.profile_picture_url ||
         (typeof profileObj.profilePicture === 'string' ? profileObj.profilePicture : profileObj.profilePicture?.url) ||
         profileObj.displayPictureUrl ||
         profileObj.profilePicUrl ||
@@ -91,23 +97,44 @@ const getLinkedInProfile = async (rawUsername) => {
         profileObj.pictureUrl ||
         profileObj.photoUrl ||
         profileObj.imageUrl ||
-        profileObj.profile_picture_url ||
-        profileObj.profile_picture ||
-        profileObj.profile_pic_url ||
-        profileObj.image ||
         profileObj.avatar ||
         '';
-    const headline = profileObj.headline || '';
-    const currentTitle = profileObj.currentTitle || '';
-    const currentCompany = profileObj.currentCompanyName || '';
-    const location = profileObj.locationFull || profileObj.city || profileObj.location || '';
-    const bio = profileObj.summary || profileObj.about || '';
-    const followersCount = profileObj.followerCount || profileObj.followersCount || 0;
-    const connectionsCount = profileObj.connectionsCount || profileObj.connections || 0;
-    const profileUrl = profileObj.profileUrl || `https://www.linkedin.com/in/${username}`;
-    const website = profileObj.websiteUrl || profileObj.website || '';
-    const education = Array.isArray(profileObj.education) ? profileObj.education : [];
-    const certifications = Array.isArray(profileObj.certifications) ? profileObj.certifications : [];
+
+    const headline = basicInfo.headline || profileObj.headline || '';
+    const currentTitle = basicInfo.currentTitle || profileObj.currentTitle || '';
+    const currentCompany = basicInfo.currentCompanyName || profileObj.currentCompanyName || profileObj.currentCompany || '';
+    const location = basicInfo.locationFull || basicInfo.city || basicInfo.location || profileObj.locationFull || profileObj.city || profileObj.location || '';
+    const bio = basicInfo.summary || basicInfo.about || profileObj.summary || profileObj.about || '';
+
+    const followerCountVal =
+        basicInfo.follower_count ??
+        basicInfo.followers_count ??
+        basicInfo.followerCount ??
+        basicInfo.followersCount ??
+        profileObj.follower_count ??
+        profileObj.followers_count ??
+        profileObj.followerCount ??
+        profileObj.followersCount;
+
+    const connectionCountVal =
+        basicInfo.connection_count ??
+        basicInfo.connections_count ??
+        basicInfo.connectionCount ??
+        basicInfo.connectionsCount ??
+        basicInfo.connections ??
+        profileObj.connection_count ??
+        profileObj.connections_count ??
+        profileObj.connectionCount ??
+        profileObj.connectionsCount ??
+        profileObj.connections;
+
+    const followersCount = followerCountVal !== undefined && followerCountVal !== null ? Number(followerCountVal) : 0;
+    const connectionsCount = connectionCountVal !== undefined && connectionCountVal !== null ? Number(connectionCountVal) : 0;
+
+    const profileUrl = basicInfo.profileUrl || profileObj.profileUrl || `https://www.linkedin.com/in/${username}`;
+    const website = basicInfo.websiteUrl || basicInfo.website || profileObj.websiteUrl || profileObj.website || '';
+    const education = Array.isArray(basicInfo.education) ? basicInfo.education : (Array.isArray(profileObj.education) ? profileObj.education : []);
+    const certifications = Array.isArray(basicInfo.certifications) ? basicInfo.certifications : (Array.isArray(profileObj.certifications) ? profileObj.certifications : []);
 
     // Extract real posts from the actor response
     // The dataset contains individual post items directly, e.g. [post1, post2, ...]
@@ -192,8 +219,9 @@ const getLinkedInProfile = async (rawUsername) => {
         username: username,
         displayName: fullName,
         profileImage: profilePicture,
-        followers: followersCount || connectionsCount,
+        followers: followersCount,
         following: 0,
+        connectionsCount: connectionsCount,
         posts: recentPosts.length,
         description: headline || bio,
         profileUrl: profileUrl,

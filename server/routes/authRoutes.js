@@ -36,9 +36,10 @@ router.post('/refresh', refreshLimiter, authController.refresh);
 router.post('/logout', authController.logout);
 router.post('/logout-all', authController.logoutAll);
 
-// Password Reset
+// Password Reset & Change
 router.post('/forgot-password', forgotPasswordLimiter, validateForgotPassword, authController.forgotPassword);
 router.post('/reset-password', resetPasswordLimiter, validateResetPassword, authController.resetPassword);
+router.put('/change-password', protect, resetPasswordLimiter, authController.changePassword);
 
 // Profile
 router.get('/me', protect, authController.getMe);

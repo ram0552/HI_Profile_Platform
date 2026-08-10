@@ -132,7 +132,7 @@ const createBlock = async (req, res) => {
         const highestOrderBlock = await ProfileBlock.findOne({ userId: req.user._id })
             .sort({ order: -1 })
             .select('order');
-        
+
         const nextOrder = highestOrderBlock && highestOrderBlock.order !== undefined ? highestOrderBlock.order + 1 : 0;
 
         let finalConfig = { ...configuration };

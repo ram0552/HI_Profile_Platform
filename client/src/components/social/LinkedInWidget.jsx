@@ -42,8 +42,17 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
 
   const headline = sp.headline || sp.description || '';
   const location = sp.location || '';
-  const followers = sp.followers !== undefined ? sp.followers : 0;
-  const following = sp.following !== undefined ? sp.following : 500;
+
+  const followers =
+    sp.followers !== undefined && sp.followers !== null ? sp.followers :
+      (sp.profile?.followersCount !== undefined ? sp.profile.followersCount :
+        (sp.rawData?.basicInfo?.follower_count || sp.rawData?.follower_count || 0));
+
+  const connections =
+    sp.connectionsCount !== undefined && sp.connectionsCount !== null ? sp.connectionsCount :
+      (sp.profile?.connectionsCount !== undefined ? sp.profile.connectionsCount :
+        (sp.rawData?.basicInfo?.connection_count || sp.rawData?.connection_count || 0));
+
   const bio = sp.description || headline || '';
   const profileUrl = sp.profileUrl || `https://www.linkedin.com/in/${username}`;
   const lastFetched = sp.lastFetched || null;
@@ -52,20 +61,9 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
   // Extract recent posts using universal candidate resolution
   const recentPosts = extractRecentPosts(sp, block);
 
-  // Debug logging at every stage
-  useEffect(() => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log("Raw Apify Profile / sp:", sp);
-      console.log("Mapped Profile Image:", profileImage);
-      console.log("MongoDB Profile Image:", sp.profileImage);
-      console.log("Frontend Image:", profileImage);
-      console.log("Resolved Image Source:", resolveSocialImageUrl(profileImage));
-    }
-  }, [username, sp, block, recentPosts, profileImage]);
-
   const stats = [
     { label: 'Followers', value: followers },
-    { label: 'Connections', value: following }
+    { label: 'Connections', value: connections }
   ];
 
   return (
@@ -252,13 +250,15 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
 
       {/* Open LinkedIn CTA */}
       <a
-        href={profileUrl}
+        href={profileUrl.startsWith('http') ? profileUrl : `https://${profileUrl}`}
         target="_blank"
         rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
         style={{
           display: 'flex',
           alignItems: 'center',
-          justify: 'center',
+          justifyContent: 'center',
           gap: 6,
           background: '#0A66C2',
           color: '#FFFFFF',
@@ -271,7 +271,8 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
           marginTop: 6,
           boxShadow: '0 3px 12px rgba(10,102,194,0.25)',
           transition: 'transform 0.15s ease, boxShadow 0.15s ease',
-          flexShrink: 0
+          flexShrink: 0,
+          cursor: 'pointer'
         }}
         onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
         onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}

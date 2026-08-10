@@ -1312,6 +1312,89 @@ const githubCallback = async (req, res) => {
     }
 };
 
+/**
+ * PUT /api/auth/change-password
+ * Change password for authenticated user
+ */
+const changePassword = async (req, res) => {
+    try {
+        const userId = req.user?._id;
+        const { currentPassword, newPassword } = req.body;
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Current password and new password are required.'
+            });
+        }
+
+        if (newPassword === currentPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'New password must be different from your current password.'
+            });
+        }
+
+        // Validate password strength (min 8 chars, 1 uppercase, 1 lowercase, 1 number)
+        if (newPassword.length < 8 || !/[A-Z]/.test(newPassword) || !/[a-z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, and one number.'
+            });
+        }
+
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User account not found.'
+            });
+        }
+
+        // OAuth-only accounts without local password
+        if (!user.password && (user.googleId || user.githubId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Account uses OAuth login. Local password cannot be changed.'
+            });
+        }
+
+        // Verify current password
+        const isMatch = await bcrypt.compare(currentPassword, user.password || '');
+        if (!isMatch) {
+            return res.status(400).json({
+                success: false,
+                message: 'Current password is incorrect.'
+            });
+        }
+
+        // Hash new password using bcrypt
+        const hashedPassword = await bcrypt.hash(newPassword, 12);
+        user.password = hashedPassword;
+        await user.save();
+
+        try {
+            if (typeof sendPasswordChangedEmail === 'function') {
+                await sendPasswordChangedEmail(user.email, user.fullName || user.username);
+            }
+        } catch (e) {
+            console.warn('[ChangePassword Email Warning]', e.message);
+        }
+
+        console.log(`[ChangePassword Success] Password updated for user ${user.email}`);
+        return res.status(200).json({
+            success: true,
+            message: 'Password updated successfully.'
+        });
+    } catch (error) {
+        console.error('[ChangePassword Error]', error);
+        return res.status(500).json({
+            success: false,
+            message: 'An error occurred while updating your password. Please try again.'
+        });
+    }
+};
+
 module.exports = {
     checkUsername,
     reserveUsername,
@@ -1324,6 +1407,7 @@ module.exports = {
     logoutAll,
     forgotPassword,
     resetPassword,
+    changePassword,
     getMe,
     googleAuth,
     googleCallback,

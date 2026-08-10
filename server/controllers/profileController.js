@@ -140,7 +140,7 @@ const updateSocialLinks = async (req, res) => {
         if (socialLinks && typeof socialLinks === 'object') {
             const currentLinks = profile.socialLinks || {};
             const allowedFields = ['github', 'linkedin', 'website', 'twitter', 'instagram', 'facebook', 'youtube', 'discord', 'telegram', 'dribbble', 'customLinks'];
-            
+
             allowedFields.forEach(field => {
                 if (socialLinks[field] !== undefined) {
                     currentLinks[field] = socialLinks[field];
@@ -300,11 +300,150 @@ const getPublicProfile = async (req, res) => {
     }
 };
 
+/**
+ * PUT /api/profile/me
+ * Update full profile details (fullName, username, bio, location, website, profileImage, socialLinks, theme, accentColor)
+ */
+const updateProfileMe = async (req, res) => {
+    try {
+        const {
+            fullName,
+            username,
+            bio,
+            headline,
+            location,
+            website,
+            profileImage,
+            profilePicture,
+            avatar,
+            socialLinks,
+            theme,
+            accentColor
+        } = req.body;
+
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        const profile = await getOrCreateProfile(user);
+
+        // Handle username update safely
+        if (username && typeof username === 'string') {
+            const cleanUsername = username.toLowerCase().trim().replace(/^@/, '');
+            if (cleanUsername && cleanUsername !== user.username) {
+                const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
+                if (!usernameRegex.test(cleanUsername)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Username must be 3-30 characters long and contain only letters, numbers, and underscores.'
+                    });
+                }
+
+                const existingUser = await User.findOne({ username: cleanUsername, _id: { $ne: user._id } });
+                const existingProfile = await Profile.findOne({ username: cleanUsername, userId: { $ne: user._id } });
+
+                if (existingUser || existingProfile) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `Username "@${cleanUsername}" is already taken.`
+                    });
+                }
+
+                user.username = cleanUsername;
+                profile.username = cleanUsername;
+            }
+        }
+
+        // Update User fields
+        if (fullName !== undefined && typeof fullName === 'string') {
+            const cleanName = fullName.trim();
+            if (cleanName) {
+                user.fullName = cleanName;
+            }
+        }
+
+        // Update Profile fields
+        if (bio !== undefined && typeof bio === 'string') {
+            profile.bio = bio.trim();
+        }
+
+        if (location !== undefined && typeof location === 'string') {
+            profile.location = location.trim();
+        }
+
+        const imageToSave = profileImage !== undefined ? profileImage : (profilePicture !== undefined ? profilePicture : undefined);
+        if (imageToSave !== undefined && typeof imageToSave === 'string') {
+            profile.profileImage = imageToSave.trim();
+        }
+
+        if (avatar !== undefined && avatar !== null) {
+            profile.avatar = avatar;
+            if (avatar.type === 'file' && avatar.data) {
+                profile.profileImage = avatar.data;
+            }
+        }
+
+        if (theme !== undefined && typeof theme === 'string') {
+            profile.theme = theme;
+        }
+
+        if (accentColor !== undefined && typeof accentColor === 'string') {
+            profile.accentColor = accentColor.trim();
+        }
+
+        const currentLinks = profile.socialLinks || {};
+        if (socialLinks && typeof socialLinks === 'object') {
+            const allowedFields = ['github', 'linkedin', 'website', 'twitter', 'instagram', 'facebook', 'youtube', 'discord', 'telegram', 'dribbble', 'location', 'customLinks'];
+
+            allowedFields.forEach(field => {
+                if (socialLinks[field] !== undefined) {
+                    currentLinks[field] = socialLinks[field];
+                }
+            });
+        }
+
+        if (location !== undefined && typeof location === 'string') {
+            currentLinks.location = location.trim();
+        }
+
+        if (website !== undefined && typeof website === 'string') {
+            currentLinks.website = website.trim();
+        }
+
+        profile.socialLinks = currentLinks;
+
+        await Promise.all([user.save(), profile.save()]);
+
+        const sanitizedUser = await User.findById(user._id).select('-password -loginHistory -failedLoginAttempts -lockoutUntil');
+
+        return res.status(200).json({
+            success: true,
+            message: 'Profile updated successfully',
+            data: {
+                profile,
+                user: sanitizedUser
+            }
+        });
+    } catch (error) {
+        console.error('[Update Profile Me Error]', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to update profile',
+            data: null
+        });
+    }
+};
+
 module.exports = {
     uploadAvatar,
     updateBio,
     updateSocialLinks,
     selectTemplate,
     getProfileMe,
-    getPublicProfile
+    getPublicProfile,
+    updateProfileMe
 };

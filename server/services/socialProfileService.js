@@ -20,6 +20,7 @@ const extractNormalizedRecentContent = (platform, data = {}) => {
             id: String(p.id || ''),
             caption: p.caption || '',
             imageUrl: p.imageUrl || p.displayUrl || p.thumbnailUrl || p.thumbnail_src || '',
+            thumbnailUrl: p.thumbnailUrl || p.imageUrl || p.displayUrl || p.thumbnail_src || '',
             contentUrl: p.postUrl || p.url || '',
             likesCount: Number(p.likesCount || p.likes_count || 0),
             commentsCount: Number(p.commentsCount || p.comments_count || 0),
@@ -38,7 +39,7 @@ const extractNormalizedRecentContent = (platform, data = {}) => {
             stars: Number(r.stars || 0),
             forks: Number(r.forks || 0),
             contentUrl: r.url || '',
-            publishedAt: r.updatedAt || ''
+            publishedAt: r.updatedAt || r.createdAt || ''
         }));
     }
 
@@ -64,12 +65,12 @@ const extractNormalizedRecentContent = (platform, data = {}) => {
         const videos = data.recentVideos || data.videos || [];
         return videos.map(v => ({
             title: v.title || '',
-            imageUrl: v.thumbnailUrl || '',
-            thumbnailUrl: v.thumbnailUrl || '',
+            imageUrl: v.thumbnailUrl || v.imageUrl || '',
+            thumbnailUrl: v.thumbnailUrl || v.imageUrl || '',
             contentUrl: v.url || '',
             viewsCount: Number(v.viewCount || 0),
-            likesCount: Number(v.likeCount || 0),
-            commentsCount: Number(v.commentCount || 0),
+            likesCount: Number(v.likeCount || v.likes || 0),
+            commentsCount: Number(v.commentCount || v.commentsCount || 0),
             duration: v.duration || '',
             description: v.description || '',
             publishedAt: v.uploadedAt || v.date || ''
@@ -82,6 +83,7 @@ const extractNormalizedRecentContent = (platform, data = {}) => {
             id: String(t.id || ''),
             text: t.text || '',
             imageUrl: t.imageUrl || '',
+            thumbnailUrl: t.thumbnailUrl || t.imageUrl || '',
             contentUrl: t.postUrl || t.url || '',
             likesCount: Number(t.likesCount || t.likeCount || 0),
             sharesCount: Number(t.retweetsCount || t.retweetCount || 0),
@@ -127,10 +129,19 @@ const extractPlatformEnrichment = (platform, data = {}) => {
     const enrichment = {};
 
     if (cleanPlatform === 'linkedin') {
-        enrichment.currentTitle = profileObj.currentTitle || data.currentTitle || '';
-        enrichment.currentCompany = profileObj.currentCompany || data.currentCompany || '';
-        enrichment.bio = profileObj.bio || data.bio || '';
-        enrichment.connectionsCount = Number(profileObj.connectionsCount || data.connectionsCount || 0);
+        const basicInfo = profileObj.basicInfo || profileObj;
+        enrichment.currentTitle = profileObj.currentTitle || basicInfo.currentTitle || data.currentTitle || '';
+        enrichment.currentCompany = profileObj.currentCompany || basicInfo.currentCompany || data.currentCompany || '';
+        enrichment.bio = profileObj.bio || basicInfo.bio || data.bio || '';
+        const connVal =
+            profileObj.connectionsCount ??
+            data.connectionsCount ??
+            data.connections ??
+            basicInfo.connection_count ??
+            basicInfo.connections_count ??
+            basicInfo.connectionCount ??
+            0;
+        enrichment.connectionsCount = Number(connVal);
     }
 
     if (cleanPlatform === 'youtube') {
@@ -230,7 +241,7 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
         } else {
             // Stale (> 24 Hours) -> Return stored document instantly AND trigger background refresh
             console.log(`[MongoDB Social Cache] STALE (>24h) for ${cleanPlatform}:${cleanUsername}. Triggering background refresh...`);
-            refreshSocialProfileAsync(socialProfile._id).catch(() => {});
+            refreshSocialProfileAsync(socialProfile._id).catch(() => { });
             return socialProfile;
         }
     }

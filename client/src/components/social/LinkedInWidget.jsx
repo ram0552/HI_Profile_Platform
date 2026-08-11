@@ -1,33 +1,49 @@
-import React, { useState, useEffect } from 'react';
-import SocialMetaRow from './SocialMetaRow';
-import SocialStatBar from './SocialStatBar';
-import SocialFooterBar from './SocialFooterBar';
+import React from 'react';
+import SocialWidgetLayout from './SocialWidgetLayout';
 import SocialAvatar from './SocialAvatar';
 import SocialImage from './SocialImage';
-import SocialSkeleton from './SocialSkeleton';
-import SocialEmptyState from './SocialEmptyState';
-import SocialErrorState from './SocialErrorState';
-import { isLikelyFailedScrape, formatRelativeTime, formatStatCount, extractRecentPosts, resolveSocialImageUrl } from '../../utils/socialHelpers';
+import { isLikelyFailedScrape, formatRelativeTime, formatStatCount, extractRecentPosts } from '../../utils/socialHelpers';
 
 export default function LinkedInWidget({ block, socialProfile, loading = false, error = null, onRetry }) {
-  const [expandedBio, setExpandedBio] = useState(false);
-  const [hoveredPostIdx, setHoveredPostIdx] = useState(null);
   const sp = socialProfile || block?.socialProfile || {};
   const config = block?.configuration || {};
 
-  if (loading) {
-    return <SocialSkeleton platform="linkedin" />;
-  }
-
-  if (error) {
-    return <SocialErrorState onRetry={onRetry} message={error} />;
-  }
+  // Extract basic_info from stored MongoDB SocialProfile document or API object
+  const basicInfo =
+    sp.basic_info ||
+    sp.basicInfo ||
+    sp.rawData?.basic_info ||
+    sp.rawData?.basicInfo ||
+    sp.profile?.basic_info ||
+    sp.profile?.basicInfo ||
+    sp.profile ||
+    sp.rawData ||
+    {};
 
   const username = sp.username || config.username || config.handle || 'user';
-  const displayName = sp.displayName || username;
 
-  // Exhaustive Profile Picture candidate mapping priority
+  // 1. basic_info.fullname → display name
+  const displayName =
+    basicInfo.fullname ||
+    basicInfo.fullName ||
+    basicInfo.name ||
+    sp.displayName ||
+    sp.fullName ||
+    sp.name ||
+    username;
+
+  // 2. basic_info.headline → headline
+  const headline =
+    basicInfo.headline ||
+    sp.headline ||
+    sp.currentTitle ||
+    '';
+
+  // 3. basic_info.profile_picture_url → profile image
   const profileImage =
+    basicInfo.profile_picture_url ||
+    basicInfo.profile_picture ||
+    basicInfo.profilePicUrl ||
     sp.profileImage ||
     sp.profilePicture ||
     sp.profilePictureUrl ||
@@ -40,25 +56,64 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
     sp.rawData?.avatarUrl ||
     '';
 
-  const headline = sp.headline || sp.description || '';
-  const location = sp.location || '';
+  // 4. basic_info.about → bio/about
+  const bio =
+    basicInfo.about ||
+    basicInfo.summary ||
+    basicInfo.bio ||
+    sp.description ||
+    sp.bio ||
+    '';
 
-  const followers =
-    sp.followers !== undefined && sp.followers !== null ? sp.followers :
-      (sp.profile?.followersCount !== undefined ? sp.profile.followersCount :
-        (sp.rawData?.basicInfo?.follower_count || sp.rawData?.follower_count || 0));
+  // 5. basic_info.location → location
+  const location =
+    basicInfo.location ||
+    basicInfo.locationFull ||
+    sp.location ||
+    '';
 
-  const connections =
-    sp.connectionsCount !== undefined && sp.connectionsCount !== null ? sp.connectionsCount :
-      (sp.profile?.connectionsCount !== undefined ? sp.profile.connectionsCount :
-        (sp.rawData?.basicInfo?.connection_count || sp.rawData?.connection_count || 0));
+  // 6. basic_info.follower_count → followers
+  const rawFollowers =
+    basicInfo.follower_count ??
+    basicInfo.followers_count ??
+    basicInfo.followerCount ??
+    basicInfo.followersCount ??
+    basicInfo.followers ??
+    (sp.followers > 0 ? sp.followers : null) ??
+    sp.followersCount ??
+    sp.profile?.followersCount ??
+    sp.rawData?.follower_count ??
+    sp.followers ??
+    0;
+  const followers = Number(rawFollowers) || 0;
 
-  const bio = sp.description || headline || '';
+  // 7. basic_info.connection_count → connections
+  const rawConnections =
+    basicInfo.connection_count ??
+    basicInfo.connections_count ??
+    basicInfo.connectionCount ??
+    basicInfo.connectionsCount ??
+    basicInfo.connections ??
+    (sp.connectionsCount > 0 ? sp.connectionsCount : null) ??
+    (sp.following > 0 ? sp.following : null) ??
+    sp.profile?.connectionsCount ??
+    sp.rawData?.connection_count ??
+    sp.connectionsCount ??
+    0;
+  const connections = Number(rawConnections) || 0;
+
+  // 8. basic_info.current_company → current company
+  const currentCompany =
+    basicInfo.current_company ||
+    basicInfo.currentCompanyName ||
+    basicInfo.currentCompany ||
+    sp.currentCompany ||
+    '';
+
   const profileUrl = sp.profileUrl || `https://www.linkedin.com/in/${username}`;
   const lastFetched = sp.lastFetched || null;
   const isFailed = isLikelyFailedScrape(sp);
 
-  // Extract recent posts using universal candidate resolution
   const recentPosts = extractRecentPosts(sp, block);
 
   const stats = [
@@ -66,219 +121,114 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
     { label: 'Connections', value: connections }
   ];
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between', fontFamily: 'Inter, sans-serif', boxSizing: 'border-box' }}>
-      {/* Fixed Header */}
-      <SocialMetaRow
-        displayName={displayName}
-        username={username}
-        profileImage={profileImage}
-        headline={headline}
-        location={location}
-        platform="linkedin"
-      />
+  // Temporary development logging as requested in Step 9
+  console.log('[LinkedIn UI DATA]', {
+    fullname: displayName,
+    headline: headline,
+    profileImage: profileImage,
+    followers: followers,
+    connections: connections,
+    bio: bio,
+    currentCompany: currentCompany,
+    basic_info: basicInfo
+  });
 
-      {/* Metric Stats */}
-      <SocialStatBar stats={stats} accentColor="#0A66C2" />
+  const renderLinkedInPost = (post, idx) => {
+    const text = post.text || post.caption || post.commentary || post.title || post.description || post.postText || post.body || '';
 
-      {/* Bio / Headline */}
-      {bio && (
-        <div style={{ marginBottom: 10, flexShrink: 0 }}>
-          <p
-            style={{
-              margin: 0,
-              fontSize: '0.82rem',
-              color: '#334155',
-              lineHeight: '1.45',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              display: '-webkit-box',
-              WebkitLineClamp: expandedBio ? 'none' : 2,
-              WebkitBoxOrient: 'vertical'
-            }}
-          >
-            {bio}
-          </p>
-          {bio.length > 80 && (
-            <button
-              onClick={() => setExpandedBio(!expandedBio)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#0A66C2',
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                cursor: 'pointer',
-                padding: 0,
-                marginTop: 2
-              }}
-            >
-              {expandedBio ? 'Show Less ▲' : 'Read More ▼'}
-            </button>
-          )}
-        </div>
-      )}
+    let rawImg = post.imageUrl || post.image || post.mediaUrl || post.thumbnail || post.displayUrl || post.articleImageUrl || '';
+    if (!rawImg && post.media) {
+      if (Array.isArray(post.media.images) && post.media.images.length > 0) {
+        rawImg = post.media.images[0].url || post.media.images[0].src || post.media.url || '';
+      } else {
+        rawImg = post.media.thumbnail || post.media.url || post.media.src || '';
+      }
+    }
+    if (!rawImg && post.article?.thumbnail) rawImg = post.article.thumbnail;
+    if (!rawImg && post.document?.thumbnail) rawImg = post.document.thumbnail;
 
-      {/* Rich Content Section — Latest 3 LinkedIn Posts */}
-      <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: 8, minHeight: 0 }}>
-        {recentPosts.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {recentPosts.slice(0, 3).map((post, idx) => {
-              const isHovered = hoveredPostIdx === idx;
+    const targetUrl = post.contentUrl || post.postUrl || post.url || post.link || post.permalink || profileUrl;
+    const likes = Number(post.likesCount || post.likes || post.numLikes || post.reactionCount || post.stats?.total_reactions || post.stats?.likes || 0);
+    const comments = Number(post.commentsCount || post.comments || post.numComments || post.stats?.comments || 0);
+    const shares = Number(post.sharesCount || post.shares || post.numShares || post.repostsCount || post.stats?.reposts || 0);
+    const dateRaw = post.publishedAt || post.createdAt || post.postedAt || post.date || post.timestamp || post.posted_at?.date || post.posted_at?.relative || '';
+    const dateStr = dateRaw ? formatRelativeTime(dateRaw) : '';
 
-              // Comprehensive property extractions for LinkedIn posts
-              const text = post.text || post.caption || post.commentary || post.title || post.description || post.postText || post.body || '';
-
-              let rawImg = post.imageUrl || post.image || post.mediaUrl || post.thumbnail || post.displayUrl || post.articleImageUrl || '';
-              if (!rawImg && post.media) {
-                if (Array.isArray(post.media.images) && post.media.images.length > 0) {
-                  rawImg = post.media.images[0].url || post.media.images[0].src || post.media.url || '';
-                } else {
-                  rawImg = post.media.thumbnail || post.media.url || post.media.src || '';
-                }
-              }
-              if (!rawImg && post.article?.thumbnail) rawImg = post.article.thumbnail;
-              if (!rawImg && post.document?.thumbnail) rawImg = post.document.thumbnail;
-
-              const targetUrl = post.contentUrl || post.postUrl || post.url || post.link || post.permalink || profileUrl;
-              const likes = Number(post.likesCount || post.likes || post.numLikes || post.reactionCount || post.stats?.total_reactions || post.stats?.likes || 0);
-              const comments = Number(post.commentsCount || post.comments || post.numComments || post.stats?.comments || 0);
-              const shares = Number(post.sharesCount || post.shares || post.numShares || post.repostsCount || post.stats?.reposts || 0);
-              const dateRaw = post.publishedAt || post.createdAt || post.postedAt || post.date || post.timestamp || post.posted_at?.date || post.posted_at?.relative || '';
-              const dateStr = dateRaw ? formatRelativeTime(dateRaw) : '';
-
-              return (
-                <a
-                  key={idx}
-                  href={targetUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bento-reveal-item"
-                  style={{
-                    '--reveal-index': idx,
-                    textDecoration: 'none',
-                    color: 'inherit',
-                    background: '#FFFFFF',
-                    padding: '10px 12px',
-                    borderRadius: 12,
-                    border: '1px solid #E2E8F0',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                    boxShadow: isHovered ? '0 6px 16px rgba(10,102,194,0.12)' : '0 2px 4px rgba(0,0,0,0.02)',
-                    borderColor: isHovered ? '#93C5FD' : '#E2E8F0',
-                    transform: isHovered ? 'translateY(-2px)' : 'translateY(0)',
-                    transition: 'all 0.2s cubic-bezier(0.2, 0, 0, 1)',
-                    cursor: 'pointer'
-                  }}
-                  onMouseEnter={() => setHoveredPostIdx(idx)}
-                  onMouseLeave={() => setHoveredPostIdx(null)}
-                >
-                  {/* Small Author Header */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <SocialAvatar
-                      src={profileImage}
-                      name={displayName}
-                      platform="linkedin"
-                      size={24}
-                      borderColor="#0A66C2"
-                    />
-                    <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontWeight: 700, fontSize: '0.78rem', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {displayName}
-                      </span>
-                      {dateStr && <span style={{ fontSize: '0.68rem', color: '#64748B', flexShrink: 0 }}>• {dateStr}</span>}
-                    </div>
-                  </div>
-
-                  {/* Optional Post Image Media Preview */}
-                  {rawImg && (
-                    <div style={{ width: '100%', height: 110, borderRadius: 8, overflow: 'hidden', background: '#F1F5F9', flexShrink: 0 }}>
-                      <SocialImage
-                        src={rawImg}
-                        alt="LinkedIn Post Media"
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Post Body Text */}
-                  {text && (
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: '0.78rem',
-                        color: '#334155',
-                        lineHeight: '1.4',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        display: '-webkit-box',
-                        WebkitLineClamp: isHovered ? 5 : 2,
-                        WebkitBoxOrient: 'vertical',
-                        transition: 'max-height 0.2s ease-in-out'
-                      }}
-                    >
-                      {text}
-                    </p>
-                  )}
-
-                  {/* Reaction Summary (Likes, Comments, Shares) */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.72rem', color: '#64748B', fontWeight: 600, marginTop: 2 }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      👍 {formatStatCount(likes)}
-                    </span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      💬 {formatStatCount(comments)}
-                    </span>
-                    {shares > 0 && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        🔁 {formatStatCount(shares)}
-                      </span>
-                    )}
-                  </div>
-                </a>
-              );
-            })}
-          </div>
-        ) : (
-          <SocialEmptyState platform="linkedin" />
-        )}
-      </div>
-
-      {/* Footer Timestamp */}
-      <SocialFooterBar lastFetched={lastFetched} isFailedScrape={isFailed} />
-
-      {/* Open LinkedIn CTA */}
+    return (
       <a
-        href={profileUrl.startsWith('http') ? profileUrl : `https://${profileUrl}`}
+        key={idx}
+        href={targetUrl}
         target="_blank"
         rel="noopener noreferrer"
-        onClick={(e) => e.stopPropagation()}
-        onPointerDown={(e) => e.stopPropagation()}
+        className="bento-reveal-item"
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 6,
-          background: '#0A66C2',
-          color: '#FFFFFF',
+          '--reveal-index': idx,
           textDecoration: 'none',
-          padding: '8px 14px',
+          color: 'inherit',
+          background: '#FFFFFF',
+          padding: '10px 12px',
           borderRadius: 12,
-          fontWeight: 700,
-          fontSize: '0.84rem',
-          textAlign: 'center',
-          marginTop: 6,
-          boxShadow: '0 3px 12px rgba(10,102,194,0.25)',
-          transition: 'transform 0.15s ease, boxShadow 0.15s ease',
-          flexShrink: 0,
+          border: '1px solid #E2E8F0',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
+          transition: 'all 0.2s cubic-bezier(0.2, 0, 0, 1)',
           cursor: 'pointer'
         }}
-        onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
-        onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
       >
-        Open LinkedIn ↗
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <SocialAvatar src={profileImage} name={displayName} platform="linkedin" size={24} borderColor="#0A66C2" />
+          <div style={{ minWidth: 0, flexGrow: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontWeight: 700, fontSize: '0.78rem', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {displayName}
+            </span>
+            {dateStr && <span style={{ fontSize: '0.68rem', color: '#64748B', flexShrink: 0 }}>• {dateStr}</span>}
+          </div>
+        </div>
+
+        {rawImg && (
+          <div style={{ width: '100%', height: 100, borderRadius: 8, overflow: 'hidden', background: '#F1F5F9', flexShrink: 0 }}>
+            <SocialImage src={rawImg} alt="LinkedIn Media" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          </div>
+        )}
+
+        {text && (
+          <p style={{ margin: 0, fontSize: '0.78rem', color: '#334155', lineHeight: '1.4', overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+            {text}
+          </p>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: '0.72rem', color: '#64748B', fontWeight: 600, marginTop: 2 }}>
+          <span>👍 {formatStatCount(likes)}</span>
+          <span>💬 {formatStatCount(comments)}</span>
+          {shares > 0 && <span>🔁 {formatStatCount(shares)}</span>}
+        </div>
       </a>
-    </div>
+    );
+  };
+
+  return (
+    <SocialWidgetLayout
+      block={block}
+      platform="linkedin"
+      displayName={displayName}
+      username={username}
+      profileImage={profileImage}
+      headline={headline}
+      location={location}
+      company={currentCompany}
+      stats={stats}
+      bio={bio}
+      profileUrl={profileUrl}
+      lastFetched={lastFetched}
+      isFailedScrape={isFailed}
+      accentColor="#0A66C2"
+      recentContent={recentPosts}
+      renderRecentItem={renderLinkedInPost}
+      loading={loading}
+      error={error}
+      onRetry={onRetry}
+    />
   );
 }

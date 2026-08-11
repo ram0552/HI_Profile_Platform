@@ -10,21 +10,38 @@ export default function SocialMetaRow({
   verified = false,
   headline = '',
   location = '',
+  company = '',
   platform = '',
-  avatarSize = 44
+  avatarSize = 44,
+  compact = false
 }) {
   const cleanUsername = sanitizeUsername(username);
   const name = displayName || cleanUsername;
   const brandColor = getSocialBrandColor(platform);
-  const metaText = headline || location;
+
+  let headlinePart = headline || '';
+  if (company && !headlinePart.toLowerCase().includes(company.toLowerCase())) {
+    headlinePart = headlinePart ? `${headlinePart} @ ${company}` : company;
+  }
+
+  let metaText = headlinePart;
+  if (!metaText && location) {
+    metaText = `📍 ${location}`;
+  } else if (metaText && location && !compact) {
+    metaText = `${metaText} • 📍 ${location}`;
+  }
+
+  const actualAvatarSize = compact ? 34 : avatarSize;
+  const brandBadgeSize = compact ? 28 : 34;
+  const brandIconSize = compact ? 14 : 18;
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, width: '100%', flexShrink: 0 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: compact ? 8 : 12, marginBottom: compact ? 6 : 12, width: '100%', flexShrink: 0 }}>
       <SocialAvatar
         src={profileImage}
         name={name}
         platform={platform}
-        size={avatarSize}
+        size={actualAvatarSize}
         borderColor={brandColor}
       />
       <div style={{ flexGrow: 1, minWidth: 0 }}>
@@ -33,7 +50,7 @@ export default function SocialMetaRow({
             style={{
               margin: 0,
               fontWeight: 800,
-              fontSize: '0.98rem',
+              fontSize: compact ? '0.85rem' : '0.98rem',
               color: '#0F172A',
               textOverflow: 'ellipsis',
               overflow: 'hidden',
@@ -48,7 +65,7 @@ export default function SocialMetaRow({
             <span
               style={{
                 color: platform === 'twitter' ? '#1DA1F2' : (platform === 'instagram' ? '#3897F0' : '#4F46E5'),
-                fontSize: '0.85rem',
+                fontSize: compact ? '0.75rem' : '0.85rem',
                 flexShrink: 0,
                 display: 'inline-flex',
                 alignItems: 'center'
@@ -59,32 +76,32 @@ export default function SocialMetaRow({
             </span>
           )}
         </div>
-        <span style={{ fontSize: '0.78rem', color: '#64748B', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', fontWeight: 500 }}>
+        <span style={{ fontSize: compact ? '0.72rem' : '0.78rem', color: '#64748B', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', fontWeight: 500 }}>
           @{cleanUsername}
         </span>
-        {metaText && (
+        {!compact && metaText && (
           <span style={{ fontSize: '0.72rem', color: '#94A3B8', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', marginTop: 1, fontWeight: 500 }}>
-            {location && !headline ? `📍 ${location}` : metaText}
+            {metaText}
           </span>
         )}
       </div>
       <div
         style={{
-          width: 34,
-          height: 34,
-          borderRadius: 10,
+          width: brandBadgeSize,
+          height: brandBadgeSize,
+          borderRadius: compact ? 8 : 10,
           background: brandColor,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           color: '#FFFFFF',
-          fontSize: '1.1rem',
+          fontSize: compact ? '0.9rem' : '1.1rem',
           flexShrink: 0,
           boxShadow: `0 4px 12px ${brandColor}40`
         }}
         title={`${platform} profile`}
       >
-        {getSocialIcon(platform, 18, '#FFFFFF')}
+        {getSocialIcon(platform, brandIconSize, '#FFFFFF')}
       </div>
     </div>
   );

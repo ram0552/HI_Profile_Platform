@@ -34,17 +34,29 @@ function convertGoogleDriveUrl(url) {
   return trimmed;
 }
 
-function AvatarDisplay({ avatar, profileImage }) {
-  if (profileImage) {
-    return <img src={profileImage} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-  }
-  if (avatar?.type === 'file' && avatar.data) {
-    return <img src={avatar.data} alt="avatar" style={{ transform: avatar.transform, width: '100%', height: '100%', objectFit: 'cover' }} />
+function AvatarDisplay({ avatar, profileImage, name = '' }) {
+  const [imgError, setImgError] = useState(false)
+  const resolvedSrc = profileImage || (avatar?.type === 'file' ? avatar.data : null)
+
+  if (!imgError && resolvedSrc) {
+    return (
+      <img
+        src={resolvedSrc}
+        alt="avatar"
+        onError={() => setImgError(true)}
+        style={{ transform: avatar?.transform || 'none', width: '100%', height: '100%', objectFit: 'cover' }}
+      />
+    )
   }
   if (avatar?.type === 'emoji' && avatar.data) {
     return <span style={{ fontSize: '4.5rem', lineHeight: '100px' }}>{avatar.data}</span>
   }
-  return <div style={{ fontSize: '3rem', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#E0E7FF', color: '#4F46E5', fontWeight: 'bold' }}>👤</div>
+  const initials = name && name.trim() ? name.trim().substring(0, 2).toUpperCase() : '👤'
+  return (
+    <div style={{ fontSize: initials.length <= 2 && initials !== '👤' ? '2.5rem' : '3rem', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#E0E7FF', color: '#4F46E5', fontWeight: 'bold' }}>
+      {initials}
+    </div>
+  )
 }
 
 // Skeleton Loader for Bento Page with Progressive Assembly Animation
@@ -160,28 +172,41 @@ export default function BentoView({ isPublic = false }) {
     return () => window.removeEventListener('pointerdown', handleClickOutside);
   }, []);
 
+  const timeoutRef = useRef(null);
+  const hasLoadedDataRef = useRef(false);
+  const loadedSocialKeysRef = useRef(new Set());
+
   // Fetch Profile & Blocks from Backend
   const fetchProfileAndBlocks = useCallback(async () => {
+    if (!isPublicView && authLoading) return;
+
     setPageLoading(true);
     setLoadError(null);
 
-    const timeoutTimer = setTimeout(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
+    timeoutRef.current = setTimeout(() => {
       setPageLoading(false);
-      setLoadError('Loading took too long. Please check your network connection.');
-    }, 10000);
+      if (!hasLoadedDataRef.current) {
+        setLoadError('Loading took too long. Please check your network connection.');
+      }
+    }, 8000);
 
     try {
       if (isPublicView) {
         if (!targetUsername) {
           setLoadError('No username provided for public profile.');
           setPageLoading(false);
-          clearTimeout(timeoutTimer);
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
           return;
         }
         const data = await getPublicProfileAndBlocks(targetUsername);
-        clearTimeout(timeoutTimer);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-        if (data.success) {
+        if (data && data.success && data.data) {
+          hasLoadedDataRef.current = true;
           setProfileData({ user: data.data.user, profile: data.data.profile });
           const rawBlocks = (data.data.blocks || []).map(b => ({
             ...b,
@@ -192,13 +217,16 @@ export default function BentoView({ isPublic = false }) {
             y: b.layout?.y || 0
           }));
           setGridBlocks(placeBlocks(rawBlocks));
+          setLoadError(null);
         } else {
-          setLoadError(data.message || 'Profile not found.');
+          if (!hasLoadedDataRef.current) {
+            setLoadError(data?.message || 'Profile not found.');
+          }
         }
       } else {
-        if (authLoading) return;
         if (!accessToken) {
-          clearTimeout(timeoutTimer);
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          setPageLoading(false);
           navigate('/login');
           return;
         }
@@ -206,15 +234,30 @@ export default function BentoView({ isPublic = false }) {
         const [profRes, blocksData] = await Promise.all([
           fetch('http://localhost:3001/api/profile/me', {
             headers: { Authorization: `Bearer ${accessToken}` }
+          }).catch(err => {
+            console.warn('[Profile ME Fetch Warning]', err);
+            return null;
           }),
-          getUserBlocks(accessToken)
+          getUserBlocks(accessToken).catch(err => {
+            console.warn('[User Blocks Fetch Warning]', err);
+            return { success: false, data: [] };
+          })
         ]);
 
-        const profData = await profRes.json();
-        clearTimeout(timeoutTimer);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
-        if (profData.success) setProfileData(profData.data);
-        if (blocksData.success) {
+        if (profRes && profRes.ok) {
+          try {
+            const profData = await profRes.json();
+            if (profData.success && profData.data) {
+              hasLoadedDataRef.current = true;
+              setProfileData(profData.data);
+            }
+          } catch (e) { }
+        }
+
+        if (blocksData && blocksData.success) {
+          hasLoadedDataRef.current = true;
           const rawBlocks = (blocksData.data || []).map(b => ({
             ...b,
             id: b._id,
@@ -224,34 +267,69 @@ export default function BentoView({ isPublic = false }) {
             y: b.layout?.y || 0
           }));
           setGridBlocks(placeBlocks(rawBlocks));
+          setLoadError(null);
         }
       }
     } catch (err) {
-      clearTimeout(timeoutTimer);
-      console.error('[Bento Error]', err);
-      setLoadError('Failed to connect to the server. Please try again.');
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      console.error('[Bento Fetch Error]', err);
+      if (!hasLoadedDataRef.current) {
+        setLoadError('Failed to connect to the server. Please try again.');
+      }
     } finally {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       setPageLoading(false);
     }
   }, [isPublicView, targetUsername, authLoading, accessToken, navigate]);
 
   useEffect(() => {
     fetchProfileAndBlocks();
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
   }, [fetchProfileAndBlocks]);
 
   // Fetch Live Social Stats
   const loadSocialData = useCallback(async (block) => {
-    const handle = block.configuration?.handle || block.configuration?.title || profileData?.profile?.socialLinks?.[block.blockType] || '';
+    const sp = block.socialProfile;
+    const basicInfo = sp?.basic_info || sp?.basicInfo || sp?.rawData?.basic_info || sp?.rawData?.basicInfo || {};
+    const hasData = Boolean(
+      sp &&
+      (
+        sp.followers > 0 ||
+        sp.posts > 0 ||
+        Boolean(sp.profileImage) ||
+        Boolean(sp.description) ||
+        Boolean(sp.displayName) ||
+        Boolean(basicInfo.fullname) ||
+        Boolean(basicInfo.headline) ||
+        Boolean(basicInfo.profile_picture_url) ||
+        Boolean(basicInfo.about) ||
+        Number(basicInfo.follower_count || 0) > 0 ||
+        Number(basicInfo.connection_count || 0) > 0
+      )
+    );
+    if (hasData) {
+      return;
+    }
+
+    const handle = block.configuration?.handle || block.configuration?.username || block.configuration?.title || '';
     if (!handle) return;
 
-    const cacheKey = `${block.blockType}:${handle.toLowerCase()}`;
-    if (socialStats[cacheKey]) return;
+    const cacheKey = `${block.blockType}:${handle.toLowerCase().trim().replace(/^@/, '')}`;
+    if (loadedSocialKeysRef.current.has(cacheKey)) return;
 
-    const stats = await fetchSocialStats(block.blockType, handle);
-    if (stats) {
-      setSocialStats(prev => ({ ...prev, [cacheKey]: stats }));
+    loadedSocialKeysRef.current.add(cacheKey);
+
+    try {
+      const stats = await fetchSocialStats(block.blockType, handle);
+      if (stats) {
+        setSocialStats(prev => ({ ...prev, [cacheKey]: stats }));
+      }
+    } catch (err) {
+      console.warn(`[Social Stats Load Error] ${cacheKey}:`, err);
     }
-  }, [profileData, socialStats]);
+  }, []);
 
   useEffect(() => {
     gridBlocks.forEach(b => {
@@ -1092,7 +1170,7 @@ export default function BentoView({ isPublic = false }) {
     return <BentoSkeleton />;
   }
 
-  if (loadError) {
+  if (loadError && !profileData && gridBlocks.length === 0) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, sans-serif', padding: 24, textAlignment: 'center' }}>
         <div style={{ fontSize: '3rem', marginBottom: 16 }}>⚠️</div>
@@ -1217,7 +1295,7 @@ export default function BentoView({ isPublic = false }) {
                 justifyContent: 'center'
               }}
             >
-              <AvatarDisplay avatar={profileObj?.avatar} profileImage={profileObj?.profileImage} />
+              <AvatarDisplay avatar={profileObj?.avatar} profileImage={profileObj?.profileImage || userObj?.profileImage} name={name} />
             </div>
 
             {/* Online Status Badge Indicator */}
@@ -1356,7 +1434,7 @@ export default function BentoView({ isPublic = false }) {
                     borderRadius: 22,
                     border: isSelected ? '2px solid #4F46E5' : '1px solid #E2E8F0',
                     zIndex: isDragging ? 100 : (isSelected ? 20 : 1),
-                    padding: 20,
+                    padding: (block.w <= 1 || block.h <= 1) ? 12 : 20,
                     boxSizing: 'border-box',
                     display: 'flex',
                     flexDirection: 'column',
@@ -1576,7 +1654,7 @@ export default function BentoView({ isPublic = false }) {
                                   type="checkbox"
                                   className="bento-checklist-checkbox"
                                   checked={isCompleted}
-                                  onChange={() => {}}
+                                  onChange={() => { }}
                                   disabled={isPublicView}
                                   aria-label={itemText}
                                 />
@@ -1608,6 +1686,17 @@ export default function BentoView({ isPublic = false }) {
                     const handle = block.configuration?.handle || block.configuration?.username || block.configuration?.title || '';
                     const cacheKey = `${block.blockType}:${handle.toLowerCase().trim().replace(/^@/, '')}`;
                     const effectiveSocialProfile = block.socialProfile || socialStats[cacheKey] || {};
+
+                    if (block.blockType === 'linkedin') {
+                      console.log('[LINKEDIN BENTOVIEW DATA]', {
+                        blockId: block.id || block._id,
+                        platform: block.blockType,
+                        handle,
+                        socialProfile: block.socialProfile,
+                        socialStatsCache: socialStats[cacheKey],
+                        effectiveSocialProfile
+                      });
+                    }
 
                     return (
                       <>

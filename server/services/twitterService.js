@@ -46,25 +46,33 @@ const getTwitterProfile = async (rawUsername) => {
 
     console.log(`[Apify Twitter Scraper] Starting runs for: "${username}"`);
 
-    // Call Apify actor automation-lab/twitter-scraper for profiles and user-tweets in parallel
-    const [profilesRun, tweetsRun] = await Promise.all([
-        client.actor("automation-lab/twitter-scraper").call({
+    let profileItems = [];
+    let tweetItems = [];
+
+    // 1. Fetch Profile Data (Primary)
+    try {
+        const profilesRun = await client.actor("automation-lab/twitter-scraper").call({
             mode: "profiles",
             usernames: [username]
-        }),
-        client.actor("automation-lab/twitter-scraper").call({
+        });
+        const dataset = await client.dataset(profilesRun.defaultDatasetId).listItems();
+        profileItems = dataset.items || [];
+    } catch (profileErr) {
+        console.warn(`[Apify Twitter Scraper] Profile actor error: ${profileErr.message}`);
+    }
+
+    // 2. Fetch Tweets Data (Secondary / Non-blocking)
+    try {
+        const tweetsRun = await client.actor("automation-lab/twitter-scraper").call({
             mode: "user-tweets",
             usernames: [username],
             maxResults: 3
-        })
-    ]);
-
-    console.log(`[Apify Twitter Scraper] Runs inited. Profiles Run ID: "${profilesRun.id}", Tweets Run ID: "${tweetsRun.id}"`);
-
-    const [ { items: profileItems }, { items: tweetItems } ] = await Promise.all([
-        client.dataset(profilesRun.defaultDatasetId).listItems(),
-        client.dataset(tweetsRun.defaultDatasetId).listItems()
-    ]);
+        });
+        const tweetsDataset = await client.dataset(tweetsRun.defaultDatasetId).listItems();
+        tweetItems = tweetsDataset.items || [];
+    } catch (tweetsErr) {
+        console.warn(`[Apify Twitter Scraper] Tweets actor error (continuing with profile data): ${tweetsErr.message}`);
+    }
 
     console.log(`[Apify Twitter Scraper] Datasets loaded. Profiles found: ${profileItems.length}, Tweets found: ${tweetItems.length}`);
 

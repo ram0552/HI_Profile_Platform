@@ -129,10 +129,10 @@ const extractPlatformEnrichment = (platform, data = {}) => {
     const enrichment = {};
 
     if (cleanPlatform === 'linkedin') {
-        const basicInfo = profileObj.basicInfo || profileObj;
+        const basicInfo = data.basic_info || data.basicInfo || profileObj.basic_info || profileObj.basicInfo || profileObj;
         enrichment.currentTitle = profileObj.currentTitle || basicInfo.currentTitle || data.currentTitle || '';
-        enrichment.currentCompany = profileObj.currentCompany || basicInfo.currentCompany || data.currentCompany || '';
-        enrichment.bio = profileObj.bio || basicInfo.bio || data.bio || '';
+        enrichment.currentCompany = profileObj.currentCompany || basicInfo.current_company || basicInfo.currentCompanyName || basicInfo.currentCompany || data.currentCompany || '';
+        enrichment.bio = profileObj.bio || basicInfo.about || basicInfo.bio || basicInfo.summary || data.bio || '';
         const connVal =
             profileObj.connectionsCount ??
             data.connectionsCount ??
@@ -170,8 +170,12 @@ const refreshSocialProfileAsync = async (socialProfileId) => {
         const data = await fetchPlatformData(socialProfile.platform, socialProfile.username);
 
         const profileObj = data.profile || data;
+        const basicInfo = data.basic_info || data.basicInfo || profileObj.basic_info || profileObj.basicInfo || profileObj;
         const extractedProfileImage =
             data.profileImage ||
+            basicInfo.profile_picture_url ||
+            basicInfo.profile_picture ||
+            basicInfo.profilePicUrl ||
             profileObj.profilePicture ||
             data.profilePicture ||
             profileObj.profileImage ||
@@ -185,16 +189,16 @@ const refreshSocialProfileAsync = async (socialProfileId) => {
             data.displayPictureUrl ||
             '';
 
-        socialProfile.displayName = data.displayName || profileObj.fullName || data.fullName || data.name || socialProfile.username;
+        socialProfile.displayName = data.displayName || basicInfo.fullname || basicInfo.fullName || profileObj.fullName || data.fullName || data.name || socialProfile.username;
         // Never overwrite a valid existing profile image with an empty string
         socialProfile.profileImage = extractedProfileImage || socialProfile.profileImage || '';
-        socialProfile.headline = profileObj.headline || data.headline || '';
-        socialProfile.location = profileObj.location || data.location || '';
+        socialProfile.headline = basicInfo.headline || profileObj.headline || data.headline || '';
+        socialProfile.location = basicInfo.location || profileObj.location || data.location || '';
         socialProfile.verified = Boolean(data.verified || profileObj.verified);
-        socialProfile.followers = Number(data.followers || data.followersCount || profileObj.followersCount || data.subscribersCount || 0);
-        socialProfile.following = Number(data.following || data.followingCount || profileObj.followingCount || 0);
+        socialProfile.followers = Number(data.followers || basicInfo.follower_count || data.followersCount || profileObj.followersCount || data.subscribersCount || 0);
+        socialProfile.following = Number(data.following || basicInfo.connection_count || data.followingCount || profileObj.followingCount || 0);
         socialProfile.posts = Number(data.posts || data.postsCount || profileObj.postsCount || data.publicRepos || data.videoCount || 0);
-        socialProfile.description = data.description || profileObj.bio || data.bio || data.biography || '';
+        socialProfile.description = data.description || basicInfo.about || profileObj.bio || data.bio || data.biography || '';
         socialProfile.profileUrl = data.profileUrl || profileObj.profileUrl || socialProfile.profileUrl;
         socialProfile.recentContent = extractNormalizedRecentContent(socialProfile.platform, data);
         socialProfile.rawData = data;
@@ -223,31 +227,70 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
         throw new Error('Platform and username are required');
     }
 
-    // 1. Search for existing SocialProfile in MongoDB
-    let socialProfile = await SocialProfile.findOne({ profileBlockId });
-    if (!socialProfile) {
+    // 1. Search for existing SocialProfile in MongoDB 
+    let socialProfile = null;
+    if (profileBlockId) {
+        socialProfile = await SocialProfile.findOne({ profileBlockId });
+    }
+    if (!socialProfile && userId) {
         socialProfile = await SocialProfile.findOne({ userId, platform: cleanPlatform, username: cleanUsername });
+    }
+    if (!socialProfile) {
+        socialProfile = await SocialProfile.findOne({ platform: cleanPlatform, username: cleanUsername });
+    }
+
+    // Ensure socialProfile is linked to the current profileBlockId if found by (userId, platform, username)
+    if (socialProfile && profileBlockId && String(socialProfile.profileBlockId) !== String(profileBlockId)) {
+        socialProfile.profileBlockId = profileBlockId;
     }
 
     const now = Date.now();
 
-    // 2. Cache Hit (< 24 Hours) & no forceRefresh -> Return stored document instantly
-    if (socialProfile && !forceRefresh) {
-        const age = now - new Date(socialProfile.lastFetched).getTime();
+    // Helper: Check if stored document contains valid populated profile data
+    const basicInfo = socialProfile?.basic_info || socialProfile?.basicInfo || socialProfile?.rawData?.basic_info || socialProfile?.rawData?.basicInfo || {};
+    const isPopulated = Boolean(
+        socialProfile &&
+        (
+            socialProfile.followers > 0 ||
+            socialProfile.posts > 0 ||
+            Boolean(socialProfile.profileImage) ||
+            Boolean(socialProfile.description) ||
+            Boolean(socialProfile.displayName) ||
+            Boolean(socialProfile.rawData) ||
+            Boolean(basicInfo.fullname) ||
+            Boolean(basicInfo.headline) ||
+            Boolean(basicInfo.profile_picture_url) ||
+            Boolean(basicInfo.about) ||
+            Number(basicInfo.follower_count || 0) > 0 ||
+            Number(basicInfo.connection_count || 0) > 0 ||
+            (socialProfile.recentContent && socialProfile.recentContent.length > 0)
+        )
+    );
 
-        if (age < CACHE_TTL_MS) {
-            console.log(`[MongoDB Social Cache] HIT (<24h) for ${cleanPlatform}:${cleanUsername}`);
+    // 2. Cache Hit (< 24 Hours) & valid data & no forceRefresh -> Return stored document instantly
+    if (socialProfile && isPopulated && !forceRefresh) {
+        const lastFetchedMs = socialProfile.lastFetched ? new Date(socialProfile.lastFetched).getTime() : 0;
+        const age = now - lastFetchedMs;
+
+        if (lastFetchedMs > 0 && age < CACHE_TTL_MS) {
+            console.log(`[MongoDB Social Cache] HIT (<24h) for ${cleanPlatform}:${cleanUsername}. Returning stored MongoDB profile (0 Apify calls).`);
+            if (socialProfile.isModified()) {
+                await socialProfile.save();
+            }
             return socialProfile;
         } else {
             // Stale (> 24 Hours) -> Return stored document instantly AND trigger background refresh
-            console.log(`[MongoDB Social Cache] STALE (>24h) for ${cleanPlatform}:${cleanUsername}. Triggering background refresh...`);
+            console.log(`[MongoDB Social Cache] STALE (>24h) for ${cleanPlatform}:${cleanUsername}. Returning stored MongoDB profile & triggering background refresh...`);
+            if (socialProfile.isModified()) {
+                await socialProfile.save();
+            }
             refreshSocialProfileAsync(socialProfile._id).catch(() => { });
             return socialProfile;
         }
     }
 
-    // 3. Cache Miss or Force Refresh -> Fetch from Apify with resilient fallback
-    console.log(`[MongoDB Social Cache] MISS for ${cleanPlatform}:${cleanUsername}. Calling Apify service...`);
+    // 3. Cache Miss, Invalid Data, or Force Refresh -> Fetch from Apify / Service with resilient fallback
+    console.log(`[MongoDB Social Cache] FETCH REQUIRED for ${cleanPlatform}:${cleanUsername}. Calling platform service...`);
     let data = {};
     let isApifySuccess = false;
 
@@ -255,11 +298,14 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
         data = await fetchPlatformData(cleanPlatform, cleanUsername);
         isApifySuccess = true;
     } catch (apifyErr) {
-        console.warn(`[Apify Fetch Warning] ${cleanPlatform}:${cleanUsername} failed (${apifyErr.message}). Creating fallback SocialProfile document...`);
+        console.warn(`[SocialProfile] Apify fetch warning for ${cleanPlatform}:${cleanUsername} (${apifyErr.message}).`);
+        if (socialProfile && isPopulated) {
+            console.log(`[SocialProfile] Serving existing MongoDB profile for ${cleanPlatform}:${cleanUsername} despite Apify fetch error.`);
+            return socialProfile;
+        }
     }
 
     const profileObj = data.profile || data;
-
     const recentContent = extractNormalizedRecentContent(cleanPlatform, data);
     const extractedProfileImage =
         data.profileImage ||
@@ -281,30 +327,33 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
         profileBlockId,
         platform: cleanPlatform,
         username: cleanUsername,
-        displayName: data.displayName || profileObj.fullName || data.fullName || data.name || cleanUsername,
+        displayName: isApifySuccess ? (data.displayName || profileObj.fullName || data.fullName || data.name || cleanUsername) : (socialProfile?.displayName || cleanUsername),
         // Never overwrite a valid existing profile image with an empty string
         profileImage: extractedProfileImage || socialProfile?.profileImage || '',
-        headline: profileObj.headline || data.headline || '',
-        location: profileObj.location || data.location || '',
-        verified: Boolean(data.verified || profileObj.verified),
-        followers: Number(data.followers || data.followersCount || profileObj.followersCount || data.subscribersCount || 0),
-        following: Number(data.following || data.followingCount || profileObj.followingCount || 0),
-        posts: Number(data.posts || data.postsCount || profileObj.postsCount || data.publicRepos || data.videoCount || 0),
-        description: data.description || profileObj.bio || data.bio || data.biography || '',
-        profileUrl: data.profileUrl || profileObj.profileUrl || `https://${cleanPlatform}.com/${cleanUsername}`,
-        recentContent,
-        rawData: isApifySuccess ? data : null,
-        lastFetched: isApifySuccess ? new Date() : new Date(0), // Set to epoch on error so background refresh will retry later
+        headline: isApifySuccess ? (profileObj.headline || data.headline || '') : (socialProfile?.headline || ''),
+        location: isApifySuccess ? (profileObj.location || data.location || '') : (socialProfile?.location || ''),
+        verified: isApifySuccess ? Boolean(data.verified || profileObj.verified) : Boolean(socialProfile?.verified),
+        followers: isApifySuccess ? Number(data.followers || data.followersCount || profileObj.followersCount || data.subscribersCount || 0) : Number(socialProfile?.followers || 0),
+        following: isApifySuccess ? Number(data.following || data.followingCount || profileObj.followingCount || 0) : Number(socialProfile?.following || 0),
+        posts: isApifySuccess ? Number(data.posts || data.postsCount || profileObj.postsCount || data.publicRepos || data.videoCount || 0) : Number(socialProfile?.posts || 0),
+        description: isApifySuccess ? (data.description || profileObj.bio || data.bio || data.biography || '') : (socialProfile?.description || ''),
+        profileUrl: isApifySuccess ? (data.profileUrl || profileObj.profileUrl || `https://${cleanPlatform}.com/${cleanUsername}`) : (socialProfile?.profileUrl || `https://${cleanPlatform}.com/${cleanUsername}`),
+        recentContent: (isApifySuccess && recentContent.length > 0) ? recentContent : (socialProfile?.recentContent || []),
+        rawData: isApifySuccess ? data : (socialProfile?.rawData || null),
+        lastFetched: isApifySuccess ? new Date() : (socialProfile?.lastFetched && new Date(socialProfile.lastFetched).getTime() > 0 ? socialProfile.lastFetched : new Date(0)),
         lastUpdated: new Date(),
-        // Apply platform-specific enrichment fields
-        ...extractPlatformEnrichment(cleanPlatform, data)
+        ...(isApifySuccess ? extractPlatformEnrichment(cleanPlatform, data) : {})
     };
 
     if (socialProfile) {
         Object.assign(socialProfile, payload);
         await socialProfile.save();
     } else {
-        socialProfile = await SocialProfile.create(payload);
+        socialProfile = await SocialProfile.findOneAndUpdate(
+            { profileBlockId },
+            { $set: payload },
+            { upsert: true, new: true, runValidators: true }
+        );
     }
 
     return socialProfile;

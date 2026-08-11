@@ -1,20 +1,22 @@
 import React from 'react';
 import { formatStatCount } from '../../utils/socialHelpers';
 
-export default function SocialStatBar({ stats = [], accentColor = '#4F46E5' }) {
+export default function SocialStatBar({ stats = [], accentColor = '#4F46E5', compact = false }) {
   if (!stats || stats.length === 0) return null;
+
+  console.log('[SOCIAL STAT BAR]', { stats });
 
   return (
     <div
       style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${Math.min(stats.length, 3)}, 1fr)`,
-        gap: 6,
+        gap: compact ? 4 : 6,
         background: '#F8FAFC',
-        padding: 6,
-        borderRadius: 14,
+        padding: compact ? '3px 4px' : 6,
+        borderRadius: compact ? 10 : 14,
         border: '1px solid #E2E8F0',
-        marginBottom: 10,
+        marginBottom: compact ? 0 : 10,
         width: '100%',
         boxSizing: 'border-box',
         flexShrink: 0
@@ -31,8 +33,8 @@ export default function SocialStatBar({ stats = [], accentColor = '#4F46E5' }) {
             title={`${exact} ${item.label}`}
             style={{
               background: '#FFFFFF',
-              borderRadius: 10,
-              padding: '6px 4px',
+              borderRadius: compact ? 6 : 10,
+              padding: compact ? '3px 2px' : '6px 4px',
               textAlign: 'center',
               border: '1px solid #F1F5F9',
               boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
@@ -48,10 +50,10 @@ export default function SocialStatBar({ stats = [], accentColor = '#4F46E5' }) {
               e.currentTarget.style.borderColor = '#F1F5F9';
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: '0.92rem', color: '#0F172A', fontFamily: 'Inter, monospace', lineHeight: 1.1 }}>
+            <div style={{ fontWeight: 800, fontSize: compact ? '0.76rem' : '0.92rem', color: '#0F172A', fontFamily: 'Inter, monospace', lineHeight: 1.1 }}>
               {formatted}
             </div>
-            <div style={{ fontSize: '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginTop: 2 }}>
+            <div style={{ fontSize: compact ? '0.58rem' : '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginTop: compact ? 1 : 2 }}>
               {item.label}
             </div>
           </div>

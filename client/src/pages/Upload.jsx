@@ -37,14 +37,13 @@ export default function Upload() {
     reader.readAsDataURL(file)
   }
 
-  const handleSave = (src, tx, ty, scale) => {
-    const transform = `translate(${tx * 0.6}px, ${ty * 0.6}px) scale(${scale * 0.9})`
-    setPreviewSrc(src)
-    setPreviewTransform(transform)
+  const handleSave = (croppedDataUrl) => {
+    setPreviewSrc(croppedDataUrl)
+    setPreviewTransform('')
     setSelectedEmoji(null)
     setSource('file')
     setModalOpen(false)
-    toast('Photo saved & cropped!')
+    toast('Photo cropped & saved!')
   }
 
   const handleCancel = () => { setModalOpen(false); if (fileRef.current) fileRef.current.value = '' }

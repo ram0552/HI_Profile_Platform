@@ -62,10 +62,17 @@ export const formatRelativeTime = (dateInput) => {
  */
 export const isLikelyFailedScrape = (sp = {}) => {
   if (!sp) return false;
-  const hasNoImage = !sp.profileImage || sp.profileImage.trim() === '';
-  const hasNoBio = !sp.description || sp.description.trim() === '';
-  const hasZeroFollowers = Number(sp.followers || 0) === 0;
-  const hasZeroPosts = Number(sp.posts || 0) === 0;
+  const basicInfo = sp.basic_info || sp.basicInfo || sp.rawData?.basic_info || sp.rawData?.basicInfo || {};
+
+  const profileImg = sp.profileImage || basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || '';
+  const bio = sp.description || sp.bio || basicInfo.about || basicInfo.summary || '';
+  const followers = Number(sp.followers || basicInfo.follower_count || basicInfo.followers_count || 0);
+  const posts = Number(sp.posts || basicInfo.connection_count || (sp.recentContent && sp.recentContent.length) || 0);
+
+  const hasNoImage = !profileImg || String(profileImg).trim() === '';
+  const hasNoBio = !bio || String(bio).trim() === '';
+  const hasZeroFollowers = followers === 0;
+  const hasZeroPosts = posts === 0;
 
   return hasNoImage && hasNoBio && hasZeroFollowers && hasZeroPosts;
 };

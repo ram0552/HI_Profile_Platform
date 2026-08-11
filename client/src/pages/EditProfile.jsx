@@ -4,12 +4,14 @@ import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
 import { getProfileMeApi, updateProfileMeApi } from '../services/profileApi'
 import ResetPasswordSection from '../components/ResetPasswordSection'
+import EditPhotoModal from '../components/EditPhotoModal'
 import {
   ArrowLeft,
   Camera,
   Trash2,
   UploadCloud,
-  Save
+  Save,
+  Crop
 } from 'lucide-react'
 
 export default function EditProfile() {
@@ -29,6 +31,11 @@ export default function EditProfile() {
 
   const [tempFilePreview, setTempFilePreview] = useState(null)
   const [isPhotoRemoved, setIsPhotoRemoved] = useState(false)
+
+  // Image Editor Modal State
+  const [isEditorOpen, setIsEditorOpen] = useState(false)
+  const [editorImageSrc, setEditorImageSrc] = useState(null)
+  const [selectedFileName, setSelectedFileName] = useState('')
 
   const [editForm, setEditForm] = useState({
     fullName: '',
@@ -101,7 +108,7 @@ export default function EditProfile() {
     }
   }, [accessToken])
 
-  // Handle Photo Selection
+  // Handle Photo Selection -> Open Editor Modal
   const handleFileChange = (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -117,17 +124,48 @@ export default function EditProfile() {
     }
 
     setError(null)
-    setIsPhotoRemoved(false)
 
-    const previewUrl = URL.createObjectURL(file)
-    setTempFilePreview(previewUrl)
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result || ''
+      setEditorImageSrc(dataUrl)
+      setSelectedFileName(file.name)
+      setIsEditorOpen(true)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+    reader.readAsDataURL(file)
+  }
+
+  // Handle Editor Save Callback (Cropped Data URL)
+  const handleEditorSave = (croppedDataUrl) => {
+    setTempFilePreview(croppedDataUrl)
     setEditForm((prev) => ({
       ...prev,
-      selectedFileName: file.name,
-      avatar: { type: 'file', data: previewUrl, bg: '' }
+      profileImage: croppedDataUrl,
+      selectedFileName: selectedFileName || 'profile_photo.jpg',
+      avatar: { type: 'file', data: croppedDataUrl, bg: '' }
     }))
+    setIsPhotoRemoved(false)
+    setIsEditorOpen(false)
+    toast('Profile photo framed & ready to save!')
+  }
 
-    toast(`Selected photo "${file.name}" ready for upload.`)
+  // Handle Editor Cancel Callback
+  const handleEditorCancel = () => {
+    setIsEditorOpen(false)
+    setEditorImageSrc(null)
+  }
+
+  // Handle Re-Opening Editor for Current Photo
+  const handleOpenAdjustPhoto = () => {
+    const currentPhoto = tempFilePreview || editForm.profileImage
+    if (currentPhoto && !isPhotoRemoved) {
+      setEditorImageSrc(currentPhoto)
+      setSelectedFileName('Current Profile Photo')
+      setIsEditorOpen(true)
+    } else {
+      fileInputRef.current?.click()
+    }
   }
 
   // Handle Photo Removal
@@ -156,13 +194,6 @@ export default function EditProfile() {
   // Handle Form Submission / Save Changes
   const handleSubmit = async (e) => {
     e.preventDefault()
-
-    if (editForm.profileImage && editForm.profileImage.trim().startsWith('data:image/')) {
-      const msg = 'Base64 image string storage is disabled. Please upload a file or select a photo.'
-      setError(msg)
-      toast(msg)
-      return
-    }
 
     setSaving(true)
     setError(null)
@@ -332,7 +363,7 @@ export default function EditProfile() {
               onChange={handleFileChange}
             />
 
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap' }}>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -341,6 +372,17 @@ export default function EditProfile() {
                 <UploadCloud size={16} />
                 <span>Upload New Picture</span>
               </button>
+
+              {(!isPhotoRemoved && (tempFilePreview || editForm.profileImage)) && (
+                <button
+                  type="button"
+                  onClick={handleOpenAdjustPhoto}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#F8FAFC', color: '#334155', border: '1px solid #CBD5E1', padding: '8px 14px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  <Crop size={15} />
+                  <span>Adjust Framing / Crop</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -353,7 +395,7 @@ export default function EditProfile() {
             </div>
 
             <span style={{ fontSize: 12, color: '#94A3B8', marginTop: 10 }}>
-              Hover over picture or click button to upload (JPG, PNG, WEBP, max 5MB).
+              Hover over picture or click button to upload and edit framing (JPG, PNG, WEBP, max 5MB).
             </span>
           </div>
 
@@ -455,6 +497,15 @@ export default function EditProfile() {
 
         </form>
       </main>
+
+      {/* Production-Grade Image Upload & Crop Editor Modal */}
+      <EditPhotoModal
+        show={isEditorOpen}
+        imageSrc={editorImageSrc}
+        fileName={selectedFileName}
+        onCancel={handleEditorCancel}
+        onSave={handleEditorSave}
+      />
     </div>
   )
 }

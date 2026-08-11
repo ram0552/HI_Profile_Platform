@@ -4,27 +4,22 @@ const resolveYouTubeUrl = (input) => {
     const trimmed = input.trim();
     if (!trimmed) return '';
 
-    // 1. Check if it's already a full URL
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
         return trimmed;
     }
 
-    // 2. Check if it starts with www. or youtube.com
     if (trimmed.startsWith('www.youtube.com') || trimmed.startsWith('youtube.com')) {
         return `https://${trimmed}`;
     }
 
-    // 3. Check if it's a Channel ID (UC + 22 characters)
     if (trimmed.startsWith('UC') && trimmed.length === 24) {
         return `https://www.youtube.com/channel/${trimmed}`;
     }
 
-    // 4. Check if it's a handle starting with @
     if (trimmed.startsWith('@')) {
         return `https://www.youtube.com/${trimmed}`;
     }
 
-    // 5. Otherwise, treat it as a handle (prepend @)
     return `https://www.youtube.com/@${trimmed}`;
 };
 
@@ -40,28 +35,55 @@ const getYouTubeProfile = async (usernameOrChannelId) => {
     const targetUrl = resolveYouTubeUrl(usernameOrChannelId);
     console.log(`[Apify YouTube Scraper] Resolved URL: "${targetUrl}" for input: "${usernameOrChannelId}"`);
 
-    // Call Apify actor streamers/youtube-scraper
-    const run = await client.actor("streamers/youtube-scraper").call({
-        startUrls: [{ url: targetUrl }],
-        maxResults: 3
-    });
+    let items = [];
+    try {
+        const run = await client.actor("streamers/youtube-scraper").call({
+            startUrls: [{ url: targetUrl }],
+            maxResults: 3
+        });
 
-    console.log(`[Apify YouTube Scraper] Run ID: "${run.id}", Status: "${run.status}"`);
-
-    const { items } = await client.dataset(run.defaultDatasetId).listItems();
-    console.log(`[Apify YouTube Scraper] Items found: ${items ? items.length : 0}`);
-
-    if (!items || items.length === 0) {
-        throw new Error('YouTube channel not found or contains no videos');
+        console.log(`[Apify YouTube Scraper] Run ID: "${run.id}", Status: "${run.status}"`);
+        const dataset = await client.dataset(run.defaultDatasetId).listItems();
+        items = dataset.items || [];
+        console.log(`[Apify YouTube Scraper] Items found: ${items.length}`);
+    } catch (apifyErr) {
+        console.warn(`[Apify YouTube Scraper Warning] Apify run failed (${apifyErr.message}). Trying public oEmbed fallback...`);
     }
 
-    // Check if the actor itself returned an error or failed
+    if (!items || items.length === 0 || items[0].error || items[0].ok === false) {
+        // Fallback: YouTube oEmbed API
+        try {
+            const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(targetUrl)}&format=json`);
+            if (oembedRes.ok) {
+                const oembedData = await oembedRes.json();
+                const cleanUsername = usernameOrChannelId.replace(/^@/, '');
+                console.log(`[YouTube oEmbed Success] Title: "${oembedData.author_name}"`);
+                return {
+                    platform: 'youtube',
+                    username: cleanUsername,
+                    displayName: oembedData.author_name || oembedData.title || cleanUsername,
+                    profileImage: oembedData.thumbnail_url || '',
+                    followers: 0,
+                    following: 0,
+                    posts: 0,
+                    description: '',
+                    profileUrl: oembedData.author_url || targetUrl,
+                    profilePicture: oembedData.thumbnail_url || '',
+                    channelName: oembedData.author_name || cleanUsername,
+                    handle: cleanUsername.startsWith('@') ? cleanUsername : `@${cleanUsername}`,
+                    subscribersCount: 0,
+                    videoCount: 0,
+                    viewCount: 0,
+                    recentVideos: []
+                };
+            }
+        } catch (oembedErr) {
+            console.warn(`[YouTube oEmbed Error] ${oembedErr.message}`);
+        }
+        throw new Error('YouTube channel not found or restricted');
+    }
+
     const firstItem = items[0];
-    if (firstItem.error || firstItem.ok === false) {
-        throw new Error(firstItem.error || 'Failed to retrieve YouTube channel data');
-    }
-
-    // Map profile information from the first item
     const channelName = firstItem.channelName || firstItem.channelUsername || usernameOrChannelId;
     const channelAvatarUrl = firstItem.channelAvatarUrl || '';
     const channelUsername = firstItem.channelUsername || channelName;
@@ -70,10 +92,7 @@ const getYouTubeProfile = async (usernameOrChannelId) => {
     const videoCount = firstItem.channelTotalVideos || 0;
     const viewCount = firstItem.channelTotalViews || 0;
     const channelUrl = firstItem.channelUrl || targetUrl;
-    const channelJoinedDate = firstItem.channelJoinedDate || firstItem.channelCreatedDate || '';
-    const channelCountry = firstItem.channelCountry || firstItem.channelLocation || '';
 
-    // Filter and map the latest 3 videos with exhaustive metadata
     const videos = items
         .filter(item => item.type === 'video' && item.title)
         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
@@ -110,10 +129,8 @@ const getYouTubeProfile = async (usernameOrChannelId) => {
         subscribersCount: subscribersCount,
         videoCount: videoCount,
         viewCount: viewCount,
-        channelJoinedDate: channelJoinedDate,
-        channelCountry: channelCountry,
         recentVideos: videos
     };
 };
 
-module.exports = { getYouTubeProfile };
+module.exports = { getYouTubeProfile, resolveYouTubeUrl };

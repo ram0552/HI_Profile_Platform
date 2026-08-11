@@ -1,115 +1,131 @@
 const { ApifyClient } = require('apify-client');
 
 const getGitHubProfile = async (username) => {
-    if (!username) {
-        throw new Error('Username is required');
+    const cleanUsername = (username || '').trim().replace(/^@/, '');
+    if (!cleanUsername) {
+        throw new Error('GitHub username is required');
     }
 
-    const client = new ApifyClient({
-        token: process.env.APIFY_API_KEY,
-    });
+    console.log(`[GitHub Service] Starting fetch for: "${cleanUsername}"...`);
 
-    console.log(`[Apify GitHub Scraper] Starting run for: "${username}"`);
-
-    // 1. Fetch profile info via Apify
-    const userRun = await client.actor("dami_studio/github-scraper").call({
-        query: `user:${username}`,
-        type: "users"
-    });
-
-    console.log(`[Apify GitHub Scraper] Users Run ID: "${userRun.id}", Status: "${userRun.status}"`);
-
-    const { items: userItems } = await client.dataset(userRun.defaultDatasetId).listItems();
-    if (!userItems || userItems.length === 0 || userItems[0].ok === false || userItems[0].errorCode === 'NO_RESULTS') {
-        throw new Error(`GitHub user not found`);
-    }
-
-    const userItem = userItems[0];
-
-    // 2. Fetch public repos via Apify
-    console.log(`[Apify GitHub Scraper] Fetching repositories for: "${username}"`);
-    const reposRun = await client.actor("dami_studio/github-scraper").call({
-        query: `user:${username}`,
-        type: "repositories"
-    });
-
-    console.log(`[Apify GitHub Scraper] Repos Run ID: "${reposRun.id}", Status: "${reposRun.status}"`);
-
-    const { items: reposItems } = await client.dataset(reposRun.defaultDatasetId).listItems();
-    
-    // Filter out error results from repositories dataset
-    const validRepos = (reposItems || []).filter(repo => repo.ok !== false && repo.name);
-
-    // Sort repositories by updatedAt descending to match "recent"
-    const sortedRepos = validRepos.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-
-    // Map repositories to standard format with exhaustive metadata
-    const mappedRepos = sortedRepos.slice(0, 3).map(repo => ({
-        name: repo.name,
-        description: repo.description || '',
-        stars: repo.stars || 0,
-        forks: repo.forks || 0,
-        language: repo.language || '',
-        url: repo.url,
-        updatedAt: repo.updatedAt || '',
-        createdAt: repo.createdAt || '',
-        topics: Array.isArray(repo.topics) ? repo.topics : [],
-        license: repo.license || '',
-        openIssues: repo.openIssues || repo.open_issues_count || 0,
-        isForked: Boolean(repo.isFork || repo.fork),
-        isArchived: Boolean(repo.isArchived || repo.archived),
-        defaultBranch: repo.defaultBranch || repo.default_branch || 'main'
-    }));
-
-    // 3. Enrich following count, avatar url, and additional profile fields using public API
-    let followingCount = 0;
-    let avatarUrl = `https://github.com/${username}.png`; // Github avatar fallback redirect
-    let company = '';
-    let location = '';
-    let website = '';
-    let ghBio = '';
-    let publicGists = 0;
+    // 1. Direct GitHub Public REST API Call (Fast, free, 100% accurate fallback/primary)
+    let ghProfileData = null;
+    let ghReposData = [];
 
     try {
-        const profileRes = await fetch(`https://api.github.com/users/${username}`, {
-            headers: { 'User-Agent': 'HighProfile-App' }
-        });
+        const [profileRes, reposRes] = await Promise.all([
+            fetch(`https://api.github.com/users/${cleanUsername}`, {
+                headers: { 'User-Agent': 'HiProfile-Platform-App' }
+            }),
+            fetch(`https://api.github.com/users/${cleanUsername}/repos?sort=updated&per_page=6`, {
+                headers: { 'User-Agent': 'HiProfile-Platform-App' }
+            })
+        ]);
+
         if (profileRes.ok) {
-            const ghProfile = await profileRes.json();
-            followingCount = ghProfile.following || 0;
-            avatarUrl = ghProfile.avatar_url || avatarUrl;
-            company = ghProfile.company || '';
-            location = ghProfile.location || '';
-            website = ghProfile.blog || '';
-            ghBio = ghProfile.bio || '';
-            publicGists = ghProfile.public_gists || 0;
+            ghProfileData = await profileRes.json();
+            console.log(`[GitHub Direct API] Profile loaded successfully for "${cleanUsername}". Followers: ${ghProfileData.followers}, Repos: ${ghProfileData.public_repos}`);
+        }
+        if (reposRes.ok) {
+            const rawRepos = await reposRes.json();
+            if (Array.isArray(rawRepos)) {
+                ghReposData = rawRepos;
+            }
         }
     } catch (err) {
-        console.error(`[Apify GitHub Scraper] Enrichment API call failed: ${err.message}`);
+        console.warn(`[GitHub Direct API Warning] Direct API fetch failed (${err.message}). Falling back to Apify...`);
+    }
+
+    // 2. Apify Scraper Enrichment if available
+    let apifyUserItem = null;
+    let apifyRepos = [];
+
+    if (process.env.APIFY_API_KEY) {
+        try {
+            const client = new ApifyClient({ token: process.env.APIFY_API_KEY });
+            const userRun = await client.actor("dami_studio/github-scraper").call({
+                query: `user:${cleanUsername}`,
+                type: "users"
+            });
+            const { items: userItems } = await client.dataset(userRun.defaultDatasetId).listItems();
+            if (userItems && userItems.length > 0 && userItems[0].ok !== false) {
+                apifyUserItem = userItems[0];
+            }
+
+            const reposRun = await client.actor("dami_studio/github-scraper").call({
+                query: `user:${cleanUsername}`,
+                type: "repositories"
+            });
+            const { items: reposItems } = await client.dataset(reposRun.defaultDatasetId).listItems();
+            if (Array.isArray(reposItems)) {
+                apifyRepos = reposItems.filter(r => r.ok !== false && r.name);
+            }
+        } catch (apifyErr) {
+            console.warn(`[Apify GitHub Scraper Warning] Apify fetch failed (${apifyErr.message}).`);
+        }
+    }
+
+    if (!ghProfileData && !apifyUserItem) {
+        throw new Error(`GitHub user "${cleanUsername}" not found`);
+    }
+
+    // Combine Direct API & Apify data seamlessly
+    const displayName = ghProfileData?.name || apifyUserItem?.name || ghProfileData?.login || apifyUserItem?.login || cleanUsername;
+    const avatarUrl = ghProfileData?.avatar_url || apifyUserItem?.avatarUrl || `https://github.com/${cleanUsername}.png`;
+    const followers = ghProfileData?.followers ?? apifyUserItem?.followers ?? 0;
+    const following = ghProfileData?.following ?? apifyUserItem?.following ?? 0;
+    const publicRepos = ghProfileData?.public_repos ?? apifyUserItem?.publicRepos ?? 0;
+    const bio = ghProfileData?.bio || apifyUserItem?.bio || '';
+    const company = ghProfileData?.company || apifyUserItem?.company || '';
+    const location = ghProfileData?.location || apifyUserItem?.location || '';
+    const website = ghProfileData?.blog || apifyUserItem?.website || '';
+
+    // Standardized repository mapping
+    let recentRepos = [];
+    if (ghReposData.length > 0) {
+        recentRepos = ghReposData.slice(0, 3).map(r => ({
+            name: r.name || '',
+            description: r.description || '',
+            stars: r.stargazers_count || 0,
+            forks: r.forks_count || 0,
+            language: r.language || '',
+            url: r.html_url || r.url || `https://github.com/${cleanUsername}/${r.name}`,
+            updatedAt: r.updated_at || r.pushed_at || '',
+            createdAt: r.created_at || ''
+        }));
+    } else if (apifyRepos.length > 0) {
+        recentRepos = apifyRepos.slice(0, 3).map(r => ({
+            name: r.name || '',
+            description: r.description || '',
+            stars: r.stars || 0,
+            forks: r.forks || 0,
+            language: r.language || '',
+            url: r.url || `https://github.com/${cleanUsername}/${r.name}`,
+            updatedAt: r.updatedAt || '',
+            createdAt: r.createdAt || ''
+        }));
     }
 
     return {
         platform: 'github',
-        username: userItem.login || username,
-        displayName: userItem.name || userItem.login || username,
+        username: cleanUsername,
+        displayName,
         profileImage: avatarUrl,
-        followers: userItem.followers || 0,
-        following: followingCount,
-        posts: userItem.publicRepos || 0,
-        description: ghBio || userItem.bio || '',
-        profileUrl: `https://github.com/${username}`,
-        avatarUrl: avatarUrl,
-        name: userItem.name || userItem.login || username,
-        bio: ghBio || userItem.bio || '',
-        followersCount: userItem.followers || 0,
-        followingCount: followingCount,
-        reposCount: userItem.publicRepos || 0,
-        publicGists: publicGists,
-        company: company,
-        location: location,
-        website: website,
-        createdAt: userItem.createdAt || '',
-        recentRepos: mappedRepos
+        followers,
+        following,
+        posts: publicRepos,
+        description: bio,
+        profileUrl: `https://github.com/${cleanUsername}`,
+        avatarUrl,
+        name: displayName,
+        bio,
+        followersCount: followers,
+        followingCount: following,
+        reposCount: publicRepos,
+        company,
+        location,
+        website,
+        recentRepos
     };
 };
 

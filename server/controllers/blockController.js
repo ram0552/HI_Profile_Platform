@@ -168,7 +168,8 @@ const createBlock = async (req, res) => {
                     userId: req.user._id,
                     profileBlockId: block._id,
                     platform: blockType,
-                    username: finalConfig.username
+                    username: finalConfig.username,
+                    forceRefresh: true
                 });
             } catch (err) {
                 console.error(`[Create Block Social Sync Error] ${blockType}:${finalConfig.username}:`, err.message);
@@ -202,19 +203,72 @@ const createBlock = async (req, res) => {
 const getUserBlocks = async (req, res) => {
     try {
         const [blocks, socialProfiles] = await Promise.all([
-            ProfileBlock.find({ userId: req.user._id }).sort({ order: 1, createdAt: 1 }),
-            SocialProfile.find({ userId: req.user._id })
+            ProfileBlock.find({ userId: req.user._id }).sort({ order: 1, createdAt: 1 }).lean(),
+            SocialProfile.find({
+                $or: [
+                    { userId: req.user._id },
+                    { platform: { $in: ['instagram', 'github', 'youtube', 'twitter', 'linkedin'] } }
+                ]
+            }).lean()
         ]);
 
-        const socialProfileMap = new Map();
+        const mapById = new Map();
+        const mapByPlatformHandle = new Map();
+        const mapByPlatform = new Map();
+
         socialProfiles.forEach(sp => {
-            socialProfileMap.set(sp.profileBlockId.toString(), sp);
+            if (sp.profileBlockId) mapById.set(sp.profileBlockId.toString(), sp);
+            if (sp.platform && sp.username) mapByPlatformHandle.set(`${sp.platform}:${sp.username.toLowerCase().trim()}`, sp);
+            if (sp.platform) mapByPlatform.set(sp.platform, sp);
         });
 
         const blocksWithSocial = blocks.map(b => {
-            const bObj = b.toObject();
-            if (socialProfileMap.has(b._id.toString())) {
-                bObj.socialProfile = socialProfileMap.get(b._id.toString());
+            const bObj = { ...b, id: b._id };
+            const handle = (b.configuration?.username || b.configuration?.handle || b.configuration?.title || '').toLowerCase().trim().replace(/^@/, '');
+            const keyByHandle = b.blockType && handle ? `${b.blockType}:${handle}` : '';
+
+            let spDoc = null;
+            if (b._id && mapById.has(b._id.toString())) {
+                spDoc = mapById.get(b._id.toString());
+            } else if (keyByHandle && mapByPlatformHandle.has(keyByHandle)) {
+                spDoc = mapByPlatformHandle.get(keyByHandle);
+            } else if (b.blockType && mapByPlatform.has(b.blockType)) {
+                spDoc = mapByPlatform.get(b.blockType);
+            }
+
+            if (spDoc) {
+                const basicInfo = spDoc.basic_info || spDoc.basicInfo || spDoc.rawData?.basic_info || spDoc.rawData?.basicInfo || spDoc.rawData || {};
+
+                const fullName = basicInfo.fullname || basicInfo.fullName || basicInfo.name || spDoc.displayName || spDoc.name || '';
+                const profileImg = basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || spDoc.profileImage || spDoc.avatarUrl || spDoc.profilePicture || '';
+                const headline = basicInfo.headline || spDoc.headline || '';
+                const location = basicInfo.location || basicInfo.locationFull || spDoc.location || '';
+                const bio = basicInfo.about || basicInfo.summary || basicInfo.bio || spDoc.description || spDoc.bio || '';
+                const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? (spDoc.followers > 0 ? spDoc.followers : null) ?? 0);
+                const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? (spDoc.connectionsCount > 0 ? spDoc.connectionsCount : null) ?? (spDoc.following > 0 ? spDoc.following : null) ?? 0);
+                const currentCompany = basicInfo.current_company || basicInfo.currentCompanyName || basicInfo.currentCompany || spDoc.currentCompany || '';
+
+                bObj.socialProfile = {
+                    ...spDoc,
+                    basic_info: basicInfo,
+                    displayName: fullName,
+                    fullName: fullName,
+                    profileImage: profileImg,
+                    avatarUrl: profileImg,
+                    profilePicture: profileImg,
+                    headline: headline,
+                    location: location,
+                    description: bio,
+                    bio: bio,
+                    followers: followers,
+                    followersCount: followers,
+                    connectionsCount: connections,
+                    connections: connections,
+                    following: connections,
+                    currentCompany: currentCompany
+                };
+
+                console.log(`[LINKEDIN API DATA] getUserBlocks blockType=${b.blockType}, followers=${followers}, connections=${connections}, headline="${headline}"`);
             }
             return bObj;
         });
@@ -249,7 +303,7 @@ const getPublicBlocks = async (req, res) => {
             });
         }
 
-        const profile = await Profile.findOne({ username });
+        const profile = await Profile.findOne({ username }).lean();
         if (!profile) {
             return res.status(404).json({
                 success: false,
@@ -258,20 +312,73 @@ const getPublicBlocks = async (req, res) => {
         }
 
         const [user, blocks, socialProfiles] = await Promise.all([
-            User.findById(profile.userId).select('fullName username role'),
-            ProfileBlock.find({ userId: profile.userId, visibility: true }).sort({ order: 1, createdAt: 1 }),
-            SocialProfile.find({ userId: profile.userId })
+            User.findById(profile.userId).select('fullName username role').lean(),
+            ProfileBlock.find({ userId: profile.userId, visibility: true }).sort({ order: 1, createdAt: 1 }).lean(),
+            SocialProfile.find({
+                $or: [
+                    { userId: profile.userId },
+                    { platform: { $in: ['instagram', 'github', 'youtube', 'twitter', 'linkedin'] } }
+                ]
+            }).lean()
         ]);
 
-        const socialProfileMap = new Map();
+        const mapById = new Map();
+        const mapByPlatformHandle = new Map();
+        const mapByPlatform = new Map();
+
         socialProfiles.forEach(sp => {
-            socialProfileMap.set(sp.profileBlockId.toString(), sp);
+            if (sp.profileBlockId) mapById.set(sp.profileBlockId.toString(), sp);
+            if (sp.platform && sp.username) mapByPlatformHandle.set(`${sp.platform}:${sp.username.toLowerCase().trim()}`, sp);
+            if (sp.platform) mapByPlatform.set(sp.platform, sp);
         });
 
         const blocksWithSocial = blocks.map(b => {
-            const bObj = b.toObject();
-            if (socialProfileMap.has(b._id.toString())) {
-                bObj.socialProfile = socialProfileMap.get(b._id.toString());
+            const bObj = { ...b, id: b._id };
+            const handle = (b.configuration?.username || b.configuration?.handle || b.configuration?.title || '').toLowerCase().trim().replace(/^@/, '');
+            const keyByHandle = b.blockType && handle ? `${b.blockType}:${handle}` : '';
+
+            let spDoc = null;
+            if (b._id && mapById.has(b._id.toString())) {
+                spDoc = mapById.get(b._id.toString());
+            } else if (keyByHandle && mapByPlatformHandle.has(keyByHandle)) {
+                spDoc = mapByPlatformHandle.get(keyByHandle);
+            } else if (b.blockType && mapByPlatform.has(b.blockType)) {
+                spDoc = mapByPlatform.get(b.blockType);
+            }
+
+            if (spDoc) {
+                const basicInfo = spDoc.basic_info || spDoc.basicInfo || spDoc.rawData?.basic_info || spDoc.rawData?.basicInfo || spDoc.rawData || {};
+
+                const fullName = basicInfo.fullname || basicInfo.fullName || basicInfo.name || spDoc.displayName || spDoc.name || '';
+                const profileImg = basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || spDoc.profileImage || spDoc.avatarUrl || spDoc.profilePicture || '';
+                const headline = basicInfo.headline || spDoc.headline || '';
+                const location = basicInfo.location || basicInfo.locationFull || spDoc.location || '';
+                const bio = basicInfo.about || basicInfo.summary || basicInfo.bio || spDoc.description || spDoc.bio || '';
+                const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? (spDoc.followers > 0 ? spDoc.followers : null) ?? 0);
+                const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? (spDoc.connectionsCount > 0 ? spDoc.connectionsCount : null) ?? (spDoc.following > 0 ? spDoc.following : null) ?? 0);
+                const currentCompany = basicInfo.current_company || basicInfo.currentCompanyName || basicInfo.currentCompany || spDoc.currentCompany || '';
+
+                bObj.socialProfile = {
+                    ...spDoc,
+                    basic_info: basicInfo,
+                    displayName: fullName,
+                    fullName: fullName,
+                    profileImage: profileImg,
+                    avatarUrl: profileImg,
+                    profilePicture: profileImg,
+                    headline: headline,
+                    location: location,
+                    description: bio,
+                    bio: bio,
+                    followers: followers,
+                    followersCount: followers,
+                    connectionsCount: connections,
+                    connections: connections,
+                    following: connections,
+                    currentCompany: currentCompany
+                };
+
+                console.log(`[LINKEDIN API DATA] getPublicBlocks blockType=${b.blockType}, followers=${followers}, connections=${connections}, headline="${headline}"`);
             }
             return bObj;
         });

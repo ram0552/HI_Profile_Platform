@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { getOrFetchSocialProfile } = require('../services/socialProfileService');
 const { getGitHubProfile } = require('../services/githubService');
 const { getInstagramProfile } = require('../services/instagramService');
 const { getYouTubeProfile } = require('../services/youtubeService');
@@ -7,29 +8,16 @@ const { getTwitterProfile } = require('../services/twitterService');
 const { getLinkedInProfile, normalizeLinkedInUsername } = require('../services/linkedinService');
 const { getDribbbleProfile } = require('../services/dribbbleService');
 
-// Caching storage map: key -> { data, expiresAt }
-const cache = new Map();
-
 // Pending requests map: key -> Promise
 const pendingRequests = new Map();
 
-// Helper to handle cached/deduplicated service calls
-const handleCachedRequest = async (cacheKey, dedupeKey, fetchFn, res) => {
-    const now = Date.now();
-    
-    // 1. Check cache
-    if (cache.has(cacheKey)) {
-        const cached = cache.get(cacheKey);
-        if (now < cached.expiresAt) {
-            console.log(`[Cache] HIT for key: "${cacheKey}"`);
-            return res.json(cached.data);
-        } else {
-            console.log(`[Cache] EXPIRED for key: "${cacheKey}". Cleaning up...`);
-            cache.delete(cacheKey);
-        }
-    }
-    
-    // 2. Check pending requests
+// Helper to handle cached/deduplicated service calls using MongoDB SocialProfile first
+const handleCachedRequest = async (platform, username, res, fallbackFn) => {
+    const cleanPlatform = (platform || '').toLowerCase().trim();
+    const cleanUsername = cleanPlatform === 'linkedin' ? normalizeLinkedInUsername(username) : (username || '').trim().toLowerCase().replace(/^@/, '');
+    const dedupeKey = `${cleanPlatform}:${cleanUsername}`;
+
+    // 1. Check pending requests
     if (pendingRequests.has(dedupeKey)) {
         console.log(`[Deduplication] Active promise found for key: "${dedupeKey}". Awaiting...`);
         try {
@@ -39,31 +27,75 @@ const handleCachedRequest = async (cacheKey, dedupeKey, fetchFn, res) => {
             return res.status(500).json({ success: false, error: error.message });
         }
     }
-    
-    // 3. Perform fetch
+
+    // 2. Perform MongoDB-first profile lookup / resilient fetch
     const promise = (async () => {
-        const data = await fetchFn();
-        const responseData = { success: true, ...data };
-        
-        // Cache result for 30 minutes
-        cache.set(cacheKey, {
-            data: responseData,
-            expiresAt: Date.now() + 30 * 60 * 1000
-        });
-        
+        let socialProfileData = null;
+
+        try {
+            // First: query MongoDB SocialProfile store
+            const socialProfileDoc = await getOrFetchSocialProfile({
+                platform: cleanPlatform,
+                username: cleanUsername
+            });
+
+            if (socialProfileDoc) {
+                const spObj = socialProfileDoc.toObject ? socialProfileDoc.toObject() : socialProfileDoc;
+                const basicInfo = spObj.basic_info || spObj.basicInfo || spObj.rawData?.basic_info || spObj.rawData?.basicInfo || {};
+
+                const fullName = basicInfo.fullname || basicInfo.fullName || basicInfo.name || spObj.displayName || spObj.name || cleanUsername;
+                const profileImg = basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || spObj.profileImage || spObj.avatarUrl || spObj.profilePicture || '';
+                const headline = basicInfo.headline || spObj.headline || '';
+                const bio = basicInfo.about || basicInfo.summary || basicInfo.bio || spObj.description || spObj.bio || '';
+                const location = basicInfo.location || basicInfo.locationFull || spObj.location || '';
+                const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? spObj.followers ?? spObj.followersCount ?? 0);
+                const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? spObj.connectionsCount ?? spObj.following ?? 0);
+                const currentCompany = basicInfo.current_company || basicInfo.currentCompanyName || basicInfo.currentCompany || spObj.currentCompany || '';
+
+                socialProfileData = {
+                    ...spObj,
+                    basic_info: basicInfo,
+                    displayName: fullName,
+                    profileImage: profileImg,
+                    avatarUrl: profileImg,
+                    profilePicture: profileImg,
+                    headline: headline,
+                    location: location,
+                    bio: bio,
+                    description: bio,
+                    followers: followers,
+                    followersCount: followers,
+                    connectionsCount: connections,
+                    currentCompany: currentCompany,
+                    followingCount: spObj.following || spObj.followingCount || connections || 0,
+                    postsCount: spObj.posts || spObj.postsCount || 0,
+                    recentPosts: spObj.recentContent || spObj.recentPosts || [],
+                    recentVideos: spObj.recentContent || spObj.recentVideos || [],
+                    recentRepos: spObj.recentContent || spObj.recentRepos || []
+                };
+            }
+        } catch (mongoServiceErr) {
+            console.warn(`[Social Route Warning] getOrFetchSocialProfile failed for ${cleanPlatform}:${cleanUsername} (${mongoServiceErr.message}). Calling fallback service...`);
+        }
+
+        if (!socialProfileData && fallbackFn) {
+            socialProfileData = await fallbackFn();
+        }
+
+        const responseData = { success: true, profile: socialProfileData || {} };
         return responseData;
     })();
-    
+
     pendingRequests.set(dedupeKey, promise);
-    
+
     try {
         const responseData = await promise;
         return res.json(responseData);
     } catch (error) {
-        console.error(`[Social Route Error] key: "${dedupeKey}":`, error);
+        console.error(`[Social Route Error] ${dedupeKey}:`, error);
         return res.status(500).json({
             success: false,
-            error: error.message || 'Failed to retrieve social data'
+            error: error.message || 'Failed to retrieve social profile data'
         });
     } finally {
         pendingRequests.delete(dedupeKey);
@@ -105,21 +137,7 @@ router.get('/github/:username', async (req, res) => {
     if (!username) {
         return res.status(400).json({ success: false, error: 'Username is required' });
     }
-    
-    const cacheKey = `github:${username}`;
-    const dedupeKey = `github:${username}`;
-    
-    await handleCachedRequest(cacheKey, dedupeKey, async () => {
-        const profile = await getGitHubProfile(username);
-        const host = req.headers.host;
-        const baseProxyUrl = `${req.protocol}://${host}/api/social/proxy?url=`;
-        
-        // Proxy avatar url
-        if (profile.avatarUrl) {
-            profile.avatarUrl = `${baseProxyUrl}${encodeURIComponent(profile.avatarUrl)}`;
-        }
-        return { profile };
-    }, res);
+    await handleCachedRequest('github', username, res, () => getGitHubProfile(username));
 });
 
 // YouTube profile endpoint
@@ -128,32 +146,7 @@ router.get('/youtube/:username', async (req, res) => {
     if (!username) {
         return res.status(400).json({ success: false, error: 'Username/Handle is required' });
     }
-    
-    const cacheKey = `youtube:${username.toLowerCase()}`;
-    const dedupeKey = `youtube:${username}`;
-    
-    await handleCachedRequest(cacheKey, dedupeKey, async () => {
-        const profile = await getYouTubeProfile(username);
-        const host = req.headers.host;
-        const baseProxyUrl = `${req.protocol}://${host}/api/social/proxy?url=`;
-        
-        // Proxy profile pic
-        if (profile.profilePicture) {
-            profile.profilePicture = `${baseProxyUrl}${encodeURIComponent(profile.profilePicture)}`;
-        }
-        
-        // Proxy video thumbnails
-        if (profile.recentVideos) {
-            profile.recentVideos = profile.recentVideos.map(video => {
-                if (video.thumbnailUrl) {
-                    video.thumbnailUrl = `${baseProxyUrl}${encodeURIComponent(video.thumbnailUrl)}`;
-                }
-                return video;
-            });
-        }
-        
-        return { profile };
-    }, res);
+    await handleCachedRequest('youtube', username, res, () => getYouTubeProfile(username));
 });
 
 // Twitter profile endpoint
@@ -162,78 +155,7 @@ router.get('/twitter/:username', async (req, res) => {
     if (!username) {
         return res.status(400).json({ success: false, error: 'Username is required' });
     }
-    
-    const cacheKey = `twitter:${username}`;
-    const dedupeKey = `twitter:${username}`;
-    
-    // 1. Check cache
-    const now = Date.now();
-    if (cache.has(cacheKey)) {
-        const cached = cache.get(cacheKey);
-        if (now < cached.expiresAt) {
-            console.log(`[Cache] HIT for key: "${cacheKey}"`);
-            return res.json(cached.data);
-        } else {
-            console.log(`[Cache] EXPIRED for key: "${cacheKey}". Cleaning up...`);
-            cache.delete(cacheKey);
-        }
-    }
-    
-    // 2. Check pending requests
-    if (pendingRequests.has(dedupeKey)) {
-        console.log(`[Deduplication] Active promise found for key: "${dedupeKey}". Awaiting...`);
-        try {
-            const data = await pendingRequests.get(dedupeKey);
-            return res.json(data);
-        } catch (error) {
-            return res.status(500).json({ success: false, error: error.message });
-        }
-    }
-    
-    // 3. Create the promise
-    const promise = (async () => {
-        const profile = await getTwitterProfile(username);
-        const host = req.headers.host;
-        const baseProxyUrl = `${req.protocol}://${host}/api/social/proxy?url=`;
-        
-        // Proxy profile pic if available
-        if (profile.profilePicture) {
-            profile.profilePicture = `${baseProxyUrl}${encodeURIComponent(profile.profilePicture)}`;
-        }
-        
-        // Proxy recent tweets media previews if available
-        if (profile.recentPosts) {
-            profile.recentPosts = profile.recentPosts.map(post => {
-                if (post.imageUrl) {
-                    post.imageUrl = `${baseProxyUrl}${encodeURIComponent(post.imageUrl)}`;
-                }
-                return post;
-            });
-        }
-        
-        let responseData;
-        if (profile.success === false) {
-            responseData = profile;
-        } else {
-            responseData = { success: true, profile };
-        }
-        
-        // Cache for 30 minutes
-        cache.set(cacheKey, { data: responseData, expiresAt: Date.now() + 30 * 60 * 1000 });
-        return responseData;
-    })();
-    
-    pendingRequests.set(dedupeKey, promise);
-    
-    try {
-        const responseData = await promise;
-        return res.json(responseData);
-    } catch (error) {
-        console.error(`[Social Route Error] twitter/${username}:`, error);
-        return res.status(500).json({ success: false, error: error.message });
-    } finally {
-        pendingRequests.delete(dedupeKey);
-    }
+    await handleCachedRequest('twitter', username, res, () => getTwitterProfile(username));
 });
 
 // LinkedIn profile endpoint
@@ -243,40 +165,7 @@ router.get('/linkedin/:username', async (req, res) => {
     if (!username) {
         return res.status(400).json({ success: false, error: 'LinkedIn profile identifier/URL is required' });
     }
-    
-    const cacheKey = `linkedin:${username.toLowerCase()}`;
-    const dedupeKey = `linkedin:${username}`;
-    
-    await handleCachedRequest(cacheKey, dedupeKey, async () => {
-        const result = await getLinkedInProfile(username);
-        const host = req.headers.host;
-        const baseProxyUrl = `${req.protocol}://${host}/api/social/proxy?url=`;
-        
-        // Proxy profile pic if available
-        if (result.profileImage) {
-            result.profileImage = `${baseProxyUrl}${encodeURIComponent(result.profileImage)}`;
-        }
-        if (result.profile) {
-            if (result.profile.profilePicture) {
-                result.profile.profilePicture = `${baseProxyUrl}${encodeURIComponent(result.profile.profilePicture)}`;
-            }
-            if (result.profile.profileImage) {
-                result.profile.profileImage = `${baseProxyUrl}${encodeURIComponent(result.profile.profileImage)}`;
-            }
-        }
-        
-        // Proxy recent posts media previews if available
-        if (result.profile && result.profile.recentPosts) {
-            result.profile.recentPosts = result.profile.recentPosts.map(post => {
-                if (post.imageUrl) {
-                    post.imageUrl = `${baseProxyUrl}${encodeURIComponent(post.imageUrl)}`;
-                }
-                return post;
-            });
-        }
-        
-        return result;
-    }, res);
+    await handleCachedRequest('linkedin', username, res, () => getLinkedInProfile(username));
 });
 
 // Dribbble profile endpoint
@@ -285,32 +174,7 @@ router.get('/dribbble/:username', async (req, res) => {
     if (!username) {
         return res.status(400).json({ success: false, error: 'Username is required' });
     }
-    
-    const cacheKey = `dribbble:${username}`;
-    const dedupeKey = `dribbble:${username}`;
-    
-    await handleCachedRequest(cacheKey, dedupeKey, async () => {
-        const profile = await getDribbbleProfile(username);
-        const host = req.headers.host;
-        const baseProxyUrl = `${req.protocol}://${host}/api/social/proxy?url=`;
-        
-        // Proxy avatar
-        if (profile.profilePicture) {
-            profile.profilePicture = `${baseProxyUrl}${encodeURIComponent(profile.profilePicture)}`;
-        }
-        
-        // Proxy shots
-        if (profile.recentShots) {
-            profile.recentShots = profile.recentShots.map(shot => {
-                if (shot.imageUrl) {
-                    shot.imageUrl = `${baseProxyUrl}${encodeURIComponent(shot.imageUrl)}`;
-                }
-                return shot;
-            });
-        }
-        
-        return { profile };
-    }, res);
+    await handleCachedRequest('dribbble', username, res, () => getDribbbleProfile(username));
 });
 
 // Instagram profile endpoint
@@ -319,33 +183,7 @@ router.get('/instagram/:username', async (req, res) => {
     if (!username) {
         return res.status(400).json({ success: false, error: 'Username is required' });
     }
-    
-    const cacheKey = `instagram:${username}`;
-    const dedupeKey = `instagram:${username}`;
-    
-    await handleCachedRequest(cacheKey, dedupeKey, async () => {
-        const profile = await getInstagramProfile(username);
-        const host = req.headers.host;
-        const baseProxyUrl = `${req.protocol}://${host}/api/social/proxy?url=`;
-        
-        if (profile.profilePicture) {
-            profile.profilePicture = `${baseProxyUrl}${encodeURIComponent(profile.profilePicture)}`;
-        }
-        if (profile.profileImage) {
-            profile.profileImage = `${baseProxyUrl}${encodeURIComponent(profile.profileImage)}`;
-        }
-        
-        if (profile.recentPosts) {
-            profile.recentPosts = profile.recentPosts.map(post => {
-                if (post.imageUrl) {
-                    post.imageUrl = `${baseProxyUrl}${encodeURIComponent(post.imageUrl)}`;
-                }
-                return post;
-            });
-        }
-        
-        return { profile };
-    }, res);
+    await handleCachedRequest('instagram', username, res, () => getInstagramProfile(username));
 });
 
 module.exports = router;

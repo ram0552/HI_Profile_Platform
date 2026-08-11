@@ -47,6 +47,10 @@ export default function Dashboard() {
   const [profile, setProfile] = useState(null)
   const [userData, setUserData] = useState(null)
   const [userBlocks, setUserBlocks] = useState([])
+  const [imgError, setImgError] = useState(false)
+
+  const resolvedProfileImage = profile?.profileImage || (profile?.avatar?.type === 'file' ? profile.avatar.data : '') || userData?.profileImage || authUser?.profileImage || ''
+  const avatarEmoji = profile?.avatar?.type === 'emoji' ? profile?.avatar?.data : null
 
   // Copy URL Feedback State
   const [copiedUrl, setCopiedUrl] = useState(false)
@@ -282,9 +286,16 @@ export default function Dashboard() {
               <div style={{ background: '#FFFFFF', borderRadius: 16, padding: 24, border: '1px solid #E2E8F0', boxShadow: '0 2px 10px rgba(0,0,0,0.02)', display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
                 {/* Avatar */}
-                <div style={{ width: 96, height: 96, borderRadius: '50%', overflow: 'hidden', background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontSize: 36, fontWeight: 700, flexShrink: 0, border: '3px solid #FFFFFF', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-                  {profile?.profileImage ? (
-                    <img src={profile.profileImage} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <div style={{ width: 96, height: 96, borderRadius: '50%', overflow: 'hidden', background: profile?.avatar?.bg || 'linear-gradient(135deg, #6366F1, #8B5CF6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontSize: 36, fontWeight: 700, flexShrink: 0, border: '3px solid #FFFFFF', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
+                  {!imgError && resolvedProfileImage ? (
+                    <img
+                      src={resolvedProfileImage}
+                      alt="Profile"
+                      onError={() => setImgError(true)}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', transform: profile?.avatar?.transform || 'none' }}
+                    />
+                  ) : avatarEmoji ? (
+                    <span style={{ fontSize: 44, lineHeight: 1 }}>{avatarEmoji}</span>
                   ) : (
                     <span>{(userData?.fullName || currentUsername).substring(0, 2).toUpperCase()}</span>
                   )}

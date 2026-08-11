@@ -8,107 +8,17 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
   const sp = socialProfile || block?.socialProfile || {};
   const config = block?.configuration || {};
 
-  // Extract basic_info from stored MongoDB SocialProfile document or API object
-  const basicInfo =
-    sp.basic_info ||
-    sp.basicInfo ||
-    sp.rawData?.basic_info ||
-    sp.rawData?.basicInfo ||
-    sp.profile?.basic_info ||
-    sp.profile?.basicInfo ||
-    sp.profile ||
-    sp.rawData ||
-    {};
-
   const username = sp.username || config.username || config.handle || 'user';
 
-  // 1. basic_info.fullname → display name
-  const displayName =
-    basicInfo.fullname ||
-    basicInfo.fullName ||
-    basicInfo.name ||
-    sp.displayName ||
-    sp.fullName ||
-    sp.name ||
-    username;
-
-  // 2. basic_info.headline → headline
-  const headline =
-    basicInfo.headline ||
-    sp.headline ||
-    sp.currentTitle ||
-    '';
-
-  // 3. basic_info.profile_picture_url → profile image
-  const profileImage =
-    basicInfo.profile_picture_url ||
-    basicInfo.profile_picture ||
-    basicInfo.profilePicUrl ||
-    sp.profileImage ||
-    sp.profilePicture ||
-    sp.profilePictureUrl ||
-    sp.avatar ||
-    sp.avatarUrl ||
-    sp.profile?.profilePicture ||
-    sp.profile?.profileImage ||
-    sp.rawData?.profilePicture ||
-    sp.rawData?.profilePicUrl ||
-    sp.rawData?.avatarUrl ||
-    '';
-
-  // 4. basic_info.about → bio/about
-  const bio =
-    basicInfo.about ||
-    basicInfo.summary ||
-    basicInfo.bio ||
-    sp.description ||
-    sp.bio ||
-    '';
-
-  // 5. basic_info.location → location
-  const location =
-    basicInfo.location ||
-    basicInfo.locationFull ||
-    sp.location ||
-    '';
-
-  // 6. basic_info.follower_count → followers
-  const rawFollowers =
-    basicInfo.follower_count ??
-    basicInfo.followers_count ??
-    basicInfo.followerCount ??
-    basicInfo.followersCount ??
-    basicInfo.followers ??
-    (sp.followers > 0 ? sp.followers : null) ??
-    sp.followersCount ??
-    sp.profile?.followersCount ??
-    sp.rawData?.follower_count ??
-    sp.followers ??
-    0;
-  const followers = Number(rawFollowers) || 0;
-
-  // 7. basic_info.connection_count → connections
-  const rawConnections =
-    basicInfo.connection_count ??
-    basicInfo.connections_count ??
-    basicInfo.connectionCount ??
-    basicInfo.connectionsCount ??
-    basicInfo.connections ??
-    (sp.connectionsCount > 0 ? sp.connectionsCount : null) ??
-    (sp.following > 0 ? sp.following : null) ??
-    sp.profile?.connectionsCount ??
-    sp.rawData?.connection_count ??
-    sp.connectionsCount ??
-    0;
-  const connections = Number(rawConnections) || 0;
-
-  // 8. basic_info.current_company → current company
-  const currentCompany =
-    basicInfo.current_company ||
-    basicInfo.currentCompanyName ||
-    basicInfo.currentCompany ||
-    sp.currentCompany ||
-    '';
+  // Read ONLY top-level normalized SocialProfile fields from MongoDB
+  const displayName = sp.displayName || sp.fullName || sp.name || username;
+  const headline = sp.headline || sp.currentTitle || '';
+  const profileImage = sp.profileImage || sp.profilePicture || sp.avatarUrl || '';
+  const bio = sp.bio || sp.description || '';
+  const location = sp.location || '';
+  const followers = Number(sp.followers ?? sp.followersCount ?? 0);
+  const connections = Number(sp.connectionsCount ?? sp.following ?? 0);
+  const currentCompany = sp.currentCompany || '';
 
   const profileUrl = sp.profileUrl || `https://www.linkedin.com/in/${username}`;
   const lastFetched = sp.lastFetched || null;
@@ -121,16 +31,14 @@ export default function LinkedInWidget({ block, socialProfile, loading = false, 
     { label: 'Connections', value: connections }
   ];
 
-  // Temporary development logging as requested in Step 9
-  console.log('[LinkedIn UI DATA]', {
-    fullname: displayName,
-    headline: headline,
-    profileImage: profileImage,
-    followers: followers,
-    connections: connections,
-    bio: bio,
-    currentCompany: currentCompany,
-    basic_info: basicInfo
+  // Development logging
+  console.log('[LinkedIn UI Normalized Data]', {
+    displayName,
+    headline,
+    profileImage,
+    followers,
+    connections,
+    blockId: block?.id || block?._id
   });
 
   const renderLinkedInPost = (post, idx) => {

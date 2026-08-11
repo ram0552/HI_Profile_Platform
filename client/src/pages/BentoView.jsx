@@ -946,7 +946,7 @@ export default function BentoView({ isPublic = false }) {
     setFormTitle(block.configuration?.title || '');
     setFormContent(block.configuration?.description || '');
     setFormUrl(block.configuration?.url || block.configuration?.imageUrl || '');
-    setFormHandle(block.configuration?.handle || '');
+    setFormHandle(block.configuration?.handle || block.configuration?.username || '');
     setFormEmoji(block.configuration?.emoji || '😊');
     setFormBgColor(block.configuration?.bg || '#F8FAFC');
     if (block.blockType === 'checklist' && Array.isArray(block.configuration?.items)) {
@@ -1032,7 +1032,7 @@ export default function BentoView({ isPublic = false }) {
         toast(`${activeDialog.toUpperCase()} handle/username is required`);
         return;
       }
-      configObj = { title: formTitle.trim() || activeDialog.toUpperCase(), handle: formHandle.trim() };
+      configObj = { title: formTitle.trim() || activeDialog.toUpperCase(), handle: formHandle.trim(), username: formHandle.trim() };
       layoutObj = { w: 2, h: 2 };
     }
 

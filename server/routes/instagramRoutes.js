@@ -13,27 +13,27 @@ const fetchInstagramFromApify = async (username, client) => {
     const actorId = "apify/instagram-profile-scraper";
     console.log(`[Apify] Scraper username: "${username}"`);
     console.log(`[Apify] Actor ID: "${actorId}"`);
-    
+
     // Trigger the run
     const run = await client.actor(actorId).call({
         usernames: [username],
     });
-    
+
     console.log(`[Apify] Actor Run ID: "${run.id}"`);
     console.log(`[Apify] Actor Run Status: "${run.status}"`);
     console.log(`[Apify] Dataset ID: "${run.defaultDatasetId}"`);
-    
+
     // Get dataset items
     const { items } = await client.dataset(run.defaultDatasetId).listItems();
     console.log(`[Apify] Dataset item count: ${items.length}`);
-    
+
     if (!items || items.length === 0) {
         throw new Error('No Instagram profile data returned from Apify');
     }
-    
+
     const item = items[0];
     console.log(`[Apify] Keys available in dataset profile object:`, Object.keys(item));
-    
+
     return item;
 };
 
@@ -149,10 +149,10 @@ router.get('/profile/:username', async (req, res) => {
         return res.json(responseData);
     } catch (error) {
         console.error('Instagram Scraper Error:', error);
-        return res.status(500).json({ 
-            success: false, 
-            error: 'Failed to retrieve Instagram profile data', 
-            details: error.message 
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to retrieve Instagram profile data',
+            details: error.message
         });
     } finally {
         // Delete pending promise regardless of success or failure

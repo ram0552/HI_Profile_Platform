@@ -47,9 +47,26 @@ const handleCachedRequest = async (platform, username, res, fallbackFn) => {
                 const profileImg = basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || spObj.profileImage || spObj.avatarUrl || spObj.profilePicture || '';
                 const headline = basicInfo.headline || spObj.headline || '';
                 const bio = basicInfo.about || basicInfo.summary || basicInfo.bio || spObj.description || spObj.bio || '';
-                const location = basicInfo.location || basicInfo.locationFull || spObj.location || '';
-                const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? spObj.followers ?? spObj.followersCount ?? 0);
-                const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? spObj.connectionsCount ?? spObj.following ?? 0);
+                const parseCount = (primary, secondary) => {
+                    if (primary !== undefined && primary !== null && primary !== '') {
+                        const n = Number(primary);
+                        if (!isNaN(n) && n > 0) return n;
+                    }
+                    if (secondary !== undefined && secondary !== null && secondary !== '') {
+                        const n = Number(secondary);
+                        if (!isNaN(n) && n > 0) return n;
+                    }
+                    return Number(primary ?? secondary ?? 0) || 0;
+                };
+
+                const followers = parseCount(
+                    basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount,
+                    spObj.followers ?? spObj.followersCount
+                );
+                const connections = parseCount(
+                    basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount,
+                    spObj.connectionsCount ?? spObj.following
+                );
                 const currentCompany = basicInfo.current_company || basicInfo.currentCompanyName || basicInfo.currentCompany || spObj.currentCompany || '';
 
                 socialProfileData = {
@@ -112,7 +129,8 @@ router.get('/proxy', async (req, res) => {
         const response = await fetch(url, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Referer': 'https://www.instagram.com/'
             }
         });
         if (!response.ok) {

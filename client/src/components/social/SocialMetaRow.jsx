@@ -80,7 +80,10 @@ export default function SocialMetaRow({
           @{cleanUsername}
         </span>
         {!compact && metaText && (
-          <span style={{ fontSize: '0.72rem', color: '#94A3B8', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', marginTop: 1, fontWeight: 500 }}>
+          <span
+            style={{ fontSize: '0.72rem', color: '#94A3B8', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', marginTop: 1, fontWeight: 500 }}
+            title={metaText}
+          >
             {metaText}
           </span>
         )}

@@ -9,11 +9,23 @@ export const sanitizeUsername = (username = '') => {
   if (!username) return 'user';
   let clean = String(username).trim();
 
-  // Strip protocol and domain if full URL was passed
-  clean = clean.replace(/^https?:\/\/(www\.)?[^\/]+\//i, '');
-  clean = clean.replace(/\/$/, '');
-  clean = clean.replace(/^@/, '');
+  if (clean.includes('linkedin.com/in/')) {
+    clean = clean.split('linkedin.com/in/')[1] || clean;
+  } else if (clean.startsWith('http://') || clean.startsWith('https://')) {
+    try {
+      const url = new URL(clean);
+      const parts = url.pathname.split('/').filter(Boolean);
+      if (parts.includes('in')) {
+        clean = parts[parts.indexOf('in') + 1] || parts[parts.length - 1];
+      } else if (parts.length > 0) {
+        clean = parts[parts.length - 1];
+      }
+    } catch (e) {
+      clean = clean.replace(/^https?:\/\/(www\.)?[^\/]+\//i, '');
+    }
+  }
 
+  clean = clean.split('?')[0].split('#')[0].replace(/\/$/, '').replace(/^@/, '').trim();
   return clean || 'user';
 };
 
@@ -129,7 +141,9 @@ export const resolveSocialImageUrl = (url = '') => {
 
   // Proxy external HTTP/HTTPS image URLs (Instagram, Facebook CDN, etc.)
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-    return `${API_BASE_URL}/social/proxy?url=${encodeURIComponent(trimmed)}`;
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const apiBase = origin.includes('5173') ? 'http://localhost:3001/api' : (origin ? `${origin}/api` : API_BASE_URL);
+    return `${apiBase}/social/proxy?url=${encodeURIComponent(trimmed)}`;
   }
 
   return trimmed;

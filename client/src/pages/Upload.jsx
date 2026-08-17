@@ -14,51 +14,87 @@ const AVATARS = [
 
 export default function Upload() {
   const fileRef = useRef(null)
-  const { setAvatar } = useOnboarding()
+  const { avatar, setAvatar } = useOnboarding()
   const { accessToken } = useAuth()
   const navigate = useNavigate()
   const [toastMsg, toastShow, toast] = useToast()
 
-  const [selectedEmoji, setSelectedEmoji] = useState(null)
-  const [selectedBg, setSelectedBg] = useState(null)
-  const [previewSrc, setPreviewSrc] = useState(null)
-  const [previewTransform, setPreviewTransform] = useState('')
+  const [selectedEmoji, setSelectedEmoji] = useState(() => avatar?.type === 'emoji' ? avatar.data : null)
+  const [selectedBg, setSelectedBg] = useState(() => avatar?.type === 'emoji' ? avatar.bg : null)
+  const [previewSrc, setPreviewSrc] = useState(() => avatar?.type === 'file' ? avatar.data : null)
+  const [editorState, setEditorState] = useState(() => avatar?.editorState || null)
+  const [rawImageSrc, setRawImageSrc] = useState(() => avatar?.rawImageSrc || avatar?.data || null)
+  
   const [modalOpen, setModalOpen] = useState(false)
   const [modalSrc, setModalSrc] = useState(null)
   const [fileName, setFileName] = useState('')
-  const [source, setSource] = useState(null) // 'file' | 'emoji'
+  const [source, setSource] = useState(() => avatar?.type || null)
 
   const handleFileChange = (e) => {
     const file = e.target.files[0]
     if (!file) return
     setFileName(file.name)
     const reader = new FileReader()
-    reader.onload = ev => { setModalSrc(ev.target.result); setModalOpen(true) }
+    reader.onload = ev => {
+      const dataUrl = ev.target.result
+      setModalSrc(dataUrl)
+      setRawImageSrc(dataUrl)
+      setModalOpen(true)
+    }
     reader.readAsDataURL(file)
   }
 
-  const handleSave = (croppedDataUrl) => {
+  const handleOpenExistingEditor = () => {
+    if (previewSrc) {
+      setModalSrc(rawImageSrc || previewSrc)
+      setModalOpen(true)
+    } else {
+      fileRef.current?.click()
+    }
+  }
+
+  const handleSave = (croppedDataUrl, newEditorState) => {
     setPreviewSrc(croppedDataUrl)
-    setPreviewTransform('')
+    setEditorState(newEditorState)
     setSelectedEmoji(null)
     setSource('file')
     setModalOpen(false)
-    toast('Photo cropped & saved!')
+    toast('Photo framed & saved successfully!')
   }
 
-  const handleCancel = () => { setModalOpen(false); if (fileRef.current) fileRef.current.value = '' }
+  const handleCancel = () => {
+    setModalOpen(false)
+    if (fileRef.current) fileRef.current.value = ''
+  }
 
   const handleEmojiSelect = (emoji, bg) => {
-    setSelectedEmoji(emoji); setSelectedBg(bg); setPreviewSrc(null); setSource('emoji')
+    setSelectedEmoji(emoji)
+    setSelectedBg(bg)
+    setPreviewSrc(null)
+    setRawImageSrc(null)
+    setEditorState(null)
+    setSource('emoji')
     toast(`Selected avatar: ${emoji}`)
   }
 
   const handleContinue = async () => {
     let avatarPayload = null
-    if (source === 'file') {
-      avatarPayload = { type: 'file', data: previewSrc, transform: previewTransform, bg: '' }
+    if (source === 'file' && previewSrc) {
+      avatarPayload = {
+        type: 'file',
+        data: previewSrc,
+        rawImageSrc: rawImageSrc || previewSrc,
+        editorState: editorState,
+        transform: '',
+        bg: ''
+      }
     } else if (source === 'emoji') {
-      avatarPayload = { type: 'emoji', data: selectedEmoji, transform: '', bg: selectedBg }
+      avatarPayload = {
+        type: 'emoji',
+        data: selectedEmoji,
+        transform: '',
+        bg: selectedBg
+      }
     }
 
     if (avatarPayload) {
@@ -74,7 +110,7 @@ export default function Upload() {
             Authorization: `Bearer ${accessToken}`
           },
           credentials: 'include',
-          body: JSON.stringify({ avatar: avatarPayload })
+          body: JSON.stringify({ avatar: avatarPayload, profileImage: avatarPayload?.data || '' })
         })
       }
     } catch (e) {
@@ -82,7 +118,7 @@ export default function Upload() {
     }
 
     toast('Photo saved successfully!')
-    setTimeout(() => navigate('/profile'), 1000)
+    setTimeout(() => navigate('/profile'), 800)
   }
 
   return (
@@ -90,10 +126,32 @@ export default function Upload() {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: 580, textAlign: 'center', animation: 'fadeInUp 0.6s cubic-bezier(0.16,1,0.3,1)' }}>
 
         {/* Upload Circle */}
-        <div className="avatar-preview-circle" onClick={() => fileRef.current?.click()}
-          style={{ width: 160, height: 160, borderRadius: '50%', border: '2px dashed #D2D2D8', background: '#F8F9FA', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', position: 'relative', overflow: 'hidden', marginBottom: 28 }}>
+        <div
+          className="avatar-preview-circle"
+          onClick={handleOpenExistingEditor}
+          style={{
+            width: 160,
+            height: 160,
+            borderRadius: '50%',
+            border: '2px dashed #D2D2D8',
+            background: '#F8F9FA',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            position: 'relative',
+            overflow: 'hidden',
+            marginBottom: 28,
+            boxShadow: '0 10px 25px rgba(0,0,0,0.06)'
+          }}
+        >
           {previewSrc ? (
-            <img src={previewSrc} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0, borderRadius: '50%', transform: previewTransform }} />
+            <img
+              src={previewSrc}
+              alt="preview"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0, borderRadius: '50%' }}
+            />
           ) : selectedEmoji ? (
             <span style={{ fontSize: '5rem', lineHeight: 1 }}>{selectedEmoji}</span>
           ) : (
@@ -113,24 +171,52 @@ export default function Upload() {
         {/* Avatars Row */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 40, flexWrap: 'wrap', justifyContent: 'center' }}>
           {AVATARS.map(({ emoji, bg }) => (
-            <div key={emoji} onClick={() => handleEmojiSelect(emoji, bg)}
-              style={{ width: 52, height: 52, borderRadius: 12, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.8rem', cursor: 'pointer', border: selectedEmoji === emoji ? '2px solid #3B82F6' : '2px solid transparent', transition: 'all 0.2s' }}>
+            <div
+              key={emoji}
+              onClick={() => handleEmojiSelect(emoji, bg)}
+              style={{
+                width: 52,
+                height: 52,
+                borderRadius: 12,
+                background: bg,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.8rem',
+                cursor: 'pointer',
+                border: selectedEmoji === emoji ? '2.5px solid #3B82F6' : '2.5px solid transparent',
+                transition: 'all 0.2s'
+              }}
+            >
               {emoji}
             </div>
           ))}
-          <div onClick={() => fileRef.current?.click()}
-            style={{ width: 52, height: 52, borderRadius: 12, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', fontWeight: 600, color: '#888', cursor: 'pointer' }}>
+          <div
+            onClick={() => fileRef.current?.click()}
+            title="Upload custom image"
+            style={{ width: 52, height: 52, borderRadius: 12, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', fontWeight: 600, color: '#888', cursor: 'pointer' }}
+          >
             +
           </div>
         </div>
 
-        <button className="btn-continue" onClick={handleContinue}
-          style={{ width: '100%', maxWidth: 220, height: 50, background: '#3B82F6', color: '#fff', border: 'none', borderRadius: 100, fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '1.05rem', cursor: 'pointer', boxShadow: '0 8px 24px rgba(59,130,246,0.15)' }}>
+        <button
+          className="btn-continue"
+          onClick={handleContinue}
+          style={{ width: '100%', maxWidth: 220, height: 50, background: '#3B82F6', color: '#fff', border: 'none', borderRadius: 100, fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '1.05rem', cursor: 'pointer', boxShadow: '0 8px 24px rgba(59,130,246,0.15)' }}
+        >
           Save &amp; Continue
         </button>
       </div>
 
-      <EditPhotoModal show={modalOpen} imageSrc={modalSrc} fileName={fileName} onCancel={handleCancel} onSave={handleSave} />
+      <EditPhotoModal
+        show={modalOpen}
+        imageSrc={modalSrc}
+        fileName={fileName}
+        initialState={editorState}
+        onCancel={handleCancel}
+        onSave={handleSave}
+      />
       <Toast message={toastMsg} show={toastShow} />
     </div>
   )

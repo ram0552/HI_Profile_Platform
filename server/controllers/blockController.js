@@ -3,6 +3,7 @@ const Profile = require('../models/Profile');
 const User = require('../models/User');
 const SocialProfile = require('../models/SocialProfile');
 const { getOrFetchSocialProfile, deleteSocialProfileByBlockId } = require('../services/socialProfileService');
+const { syncSetupSocialLinksToBento } = require('../services/bentoSyncService');
 
 const MAX_BLOCKS_PER_PROFILE = 20;
 const VALID_BLOCK_TYPES = [
@@ -15,10 +16,11 @@ const VALID_BLOCK_TYPES = [
     'github',
     'youtube',
     'twitter',
-    'linkedin'
+    'linkedin',
+    'dribbble'
 ];
 
-const SOCIAL_PLATFORMS = ['instagram', 'github', 'youtube', 'twitter', 'linkedin'];
+const SOCIAL_PLATFORMS = ['instagram', 'github', 'youtube', 'twitter', 'linkedin', 'dribbble'];
 
 /**
  * Validate Image URLs (Reject Base64 dataURIs)
@@ -202,12 +204,15 @@ const createBlock = async (req, res) => {
  */
 const getUserBlocks = async (req, res) => {
     try {
+        // Automatically sync setup social handles to Bento blocks
+        await syncSetupSocialLinksToBento(req.user._id);
+
         const [blocks, socialProfiles] = await Promise.all([
             ProfileBlock.find({ userId: req.user._id }).sort({ order: 1, createdAt: 1 }).lean(),
             SocialProfile.find({
                 $or: [
                     { userId: req.user._id },
-                    { platform: { $in: ['instagram', 'github', 'youtube', 'twitter', 'linkedin'] } }
+                    { platform: { $in: ['instagram', 'github', 'youtube', 'twitter', 'linkedin', 'dribbble'] } }
                 ]
             }).lean()
         ]);

@@ -6618,3 +6618,8 @@ input:checked+.db-toggle-slider:before {
     white-space: nowrap;
     border-width: 0;
 }
+
+.password-input::-ms-reveal,
+.password-input::-ms-clear {
+  display: none !important;
+}

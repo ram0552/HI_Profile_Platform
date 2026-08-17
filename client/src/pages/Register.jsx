@@ -193,6 +193,7 @@ export default function Register() {
           {/* Password Input */}
           <div style={{ marginBottom: 14, position: 'relative' }}>
             <input
+              className="password-input"
               type={showPw ? 'text' : 'password'}
               placeholder="Password (Min 8 chars, 1 upper, 1 special, 1 number)"
               value={password}
@@ -211,13 +212,13 @@ export default function Register() {
                 boxSizing: 'border-box'
               }}
             />
-            {/* <button
+            <button
               type="button"
               onClick={() => setShowPw(p => !p)}
               style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8E8E93' }}
             >
                {showPw ? <EyeOff size={20} /> : <Eye size={20} />}
-            </button> */}
+            </button>
           </div>
 
           {/* Confirm Password Input */}

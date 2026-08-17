@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOnboarding } from '../context/OnboardingContext'
 import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
+import EditPhotoModal from '../components/EditPhotoModal'
 
 const PLATFORMS = [
   { id: 'twitter',   label: 'Twitter',   bg: '#55ACEE', icon: <svg viewBox="0 0 24 24" fill="white" width="20" height="20"><path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.827 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-7.496 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z"/></svg> },
@@ -15,7 +16,7 @@ const PLATFORMS = [
 
 function AvatarDisplay({ avatar }) {
   if (avatar?.type === 'file' && avatar.data) {
-    return <img src={avatar.data} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%', transform: avatar.transform }} />
+    return <img src={avatar.data} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
   }
   if (avatar?.type === 'emoji' && avatar.data) {
     return <span style={{ fontSize: '4.2rem' }}>{avatar.data}</span>
@@ -24,11 +25,64 @@ function AvatarDisplay({ avatar }) {
 }
 
 export default function Setup() {
-  const { avatar, profileName, profileBio, socialLinks, setSocialLinks } = useOnboarding()
-  const { accessToken } = useAuth()
+  const { avatar, setAvatar, profileName, profileBio, socialLinks, setSocialLinks } = useOnboarding()
+  const { accessToken, user } = useAuth()
   const [links, setLinks] = useState(() => socialLinks || {})
   const navigate = useNavigate()
   const [toastMsg, toastShow, toast] = useToast()
+
+  const fileInputRef = useRef(null)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [modalSrc, setModalSrc] = useState(null)
+  const [fileName, setFileName] = useState('')
+
+  const handleAvatarClick = () => {
+    if (avatar?.type === 'file' && (avatar.rawImageSrc || avatar.data)) {
+      setModalSrc(avatar.rawImageSrc || avatar.data)
+      setFileName('profile_photo.jpg')
+      setModalOpen(true)
+    } else {
+      fileInputRef.current?.click()
+    }
+  }
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    setFileName(file.name)
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      setModalSrc(ev.target.result)
+      setModalOpen(true)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleEditorSave = (croppedDataUrl, editorState) => {
+    const updatedAvatar = {
+      type: 'file',
+      data: croppedDataUrl,
+      rawImageSrc: modalSrc,
+      editorState: editorState,
+      transform: '',
+      bg: ''
+    }
+    setAvatar(updatedAvatar)
+    setModalOpen(false)
+    toast('Profile image framing updated!')
+
+    if (accessToken) {
+      fetch('http://localhost:3001/api/profile/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({ avatar: updatedAvatar, profileImage: croppedDataUrl })
+      }).catch(err => console.error('Failed to sync avatar', err))
+    }
+  }
 
   const submitSocialLinks = async (linksPayload) => {
     try {
@@ -52,7 +106,7 @@ export default function Setup() {
     setSocialLinks(links)
     await submitSocialLinks(links)
     toast('Social links saved!')
-    setTimeout(() => navigate('/select'), 1000)
+    setTimeout(() => navigate('/select'), 800)
   }
 
   const handleSkip = async () => {
@@ -67,13 +121,38 @@ export default function Setup() {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: 440, animation: 'fadeInUp 0.6s cubic-bezier(0.16,1,0.3,1)' }}>
         
         {/* Avatar */}
-        <div style={{ width: 130, height: 130, borderRadius: '50%', border: '2px solid #E2E2E8', background: avatarBg || '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: 24 }}>
+        <div
+          onClick={handleAvatarClick}
+          title="Click to edit or change profile picture"
+          style={{
+            width: 130,
+            height: 130,
+            borderRadius: '50%',
+            border: '2px solid #E2E2E8',
+            background: avatarBg || '#F3F4F6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+            marginBottom: 24,
+            cursor: 'pointer',
+            boxShadow: '0 10px 25px rgba(0,0,0,0.05)'
+          }}
+        >
           <AvatarDisplay avatar={avatar} />
         </div>
 
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/*"
+          style={{ display: 'none' }}
+          onChange={handleFileChange}
+        />
+
         {/* Name */}
         <h1 style={{ fontFamily: 'var(--font-heading)', fontSize: '2.2rem', fontWeight: 800, color: '#111111', margin: '0 0 10px 0', textAlign: 'center', letterSpacing: '-0.02em' }}>
-          {profileName || 'Your Name'}
+          {user?.fullName || profileName || 'Your Name'}
         </h1>
 
         {/* Bio */}
@@ -187,6 +266,15 @@ export default function Setup() {
           </button>
         </div>
       </div>
+
+      <EditPhotoModal
+        show={modalOpen}
+        imageSrc={modalSrc}
+        fileName={fileName}
+        initialState={avatar?.editorState}
+        onCancel={() => setModalOpen(false)}
+        onSave={handleEditorSave}
+      />
       <Toast message={toastMsg} show={toastShow} />
     </div>
   )

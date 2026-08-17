@@ -1,5 +1,6 @@
 const Profile = require('../models/Profile');
 const User = require('../models/User');
+const { syncSetupSocialLinksToBento } = require('../services/bentoSyncService');
 
 /**
  * Helper: Find or create profile for a user
@@ -148,6 +149,11 @@ const updateSocialLinks = async (req, res) => {
             });
             profile.socialLinks = currentLinks;
             await profile.save();
+
+            // Automatically sync social handles to Bento blocks if Bento is selected or active template
+            if (profile.selectedTemplate === 'bento') {
+                await syncSetupSocialLinksToBento(req.user._id);
+            }
         }
 
         const user = await User.findById(req.user._id);
@@ -195,6 +201,11 @@ const selectTemplate = async (req, res) => {
         if (selectedTemplate) {
             profile.selectedTemplate = selectedTemplate;
             await profile.save();
+
+            // Automatically sync setup social handles into Bento profile blocks when Bento is selected
+            if (selectedTemplate === 'bento') {
+                await syncSetupSocialLinksToBento(req.user._id);
+            }
         }
 
         const user = await User.findById(req.user._id);

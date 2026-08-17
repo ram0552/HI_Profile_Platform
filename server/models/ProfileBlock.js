@@ -10,7 +10,8 @@ const BLOCK_TYPES = [
     'github',
     'youtube',
     'twitter',
-    'linkedin'
+    'linkedin',
+    'dribbble'
 ];
 
 const profileBlockSchema = new mongoose.Schema({

@@ -103,13 +103,13 @@ export default function Claim() {
         {/* Dynamic Status Message Displayed Above Input Field */}
         <div style={{ height: '28px', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem', fontWeight: 600 }}>
           {isChecking && (
-            <span style={{ color: '#6B7280' }}>🔍 {statusMessage}</span>
+            <span style={{ color: '#6B7280' }}> {statusMessage}</span>
           )}
           {!isChecking && isAvailable === true && (
-            <span style={{ color: '#10B981' }}>🟢 {statusMessage}</span>
+            <span style={{ color: '#10B981' }}> {statusMessage}</span>
           )}
           {!isChecking && isAvailable === false && (
-            <span style={{ color: '#EF4444' }}>🔴 {statusMessage}</span>
+            <span style={{ color: '#EF4444' }}> {statusMessage}</span>
           )}
         </div>
 

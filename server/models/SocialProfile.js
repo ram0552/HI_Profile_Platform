@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const PLATFORMS = ['instagram', 'github', 'youtube', 'twitter', 'linkedin'];
+const PLATFORMS = ['instagram', 'github', 'youtube', 'twitter', 'linkedin', 'dribbble'];
 
 const recentContentSchema = new mongoose.Schema({
     id: { type: String, default: '' },

@@ -162,6 +162,7 @@ export default function ResetPasswordSection({ accessToken, toast }) {
             </label>
             <div style={{ position: 'relative', width: '100%' }}>
               <input
+                className="password-input"    
                 type={showCurrentPassword ? 'text' : 'password'}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
@@ -211,6 +212,7 @@ export default function ResetPasswordSection({ accessToken, toast }) {
               </label>
               <div style={{ position: 'relative', width: '100%' }}>
                 <input
+                  className="password-input"
                   type={showNewPassword ? 'text' : 'password'}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
@@ -258,6 +260,7 @@ export default function ResetPasswordSection({ accessToken, toast }) {
               </label>
               <input
                 type="password"
+                className="password-input"
                 value={retypeNewPassword}
                 onChange={(e) => setRetypeNewPassword(e.target.value)}
                 placeholder="Confirm new password"

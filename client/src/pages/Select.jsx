@@ -17,11 +17,11 @@ function AvatarPreview({ avatar, size = 56 }) {
 
 export default function Select() {
   const { avatar, profileName, profileBio, socialLinks, setSelectedTemplate } = useOnboarding()
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
   const [selected, setSelected] = useState('bento')
   const navigate = useNavigate()
   const [toastMsg, toastShow, toast] = useToast()
-  const name = profileName || 'Your Name'
+  const name = user?.fullName || profileName || 'Your Name'
   const bio  = profileBio  || 'Nice to meet you!'
 
   const handleContinue = async () => {

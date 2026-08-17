@@ -130,20 +130,30 @@ export default function EditProfile() {
       const dataUrl = event.target?.result || ''
       setEditorImageSrc(dataUrl)
       setSelectedFileName(file.name)
+      setEditorInitialState(null)
       setIsEditorOpen(true)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
     reader.readAsDataURL(file)
   }
 
-  // Handle Editor Save Callback (Cropped Data URL)
-  const handleEditorSave = (croppedDataUrl) => {
+  const [editorInitialState, setEditorInitialState] = useState(null)
+
+  // Handle Editor Save Callback (Cropped Data URL + transform state)
+  const handleEditorSave = (croppedDataUrl, editorState) => {
     setTempFilePreview(croppedDataUrl)
+    setEditorInitialState(editorState)
     setEditForm((prev) => ({
       ...prev,
       profileImage: croppedDataUrl,
       selectedFileName: selectedFileName || 'profile_photo.jpg',
-      avatar: { type: 'file', data: croppedDataUrl, bg: '' }
+      avatar: {
+        type: 'file',
+        data: croppedDataUrl,
+        rawImageSrc: editorState?.rawImageSrc || editorImageSrc || croppedDataUrl,
+        editorState: editorState,
+        bg: ''
+      }
     }))
     setIsPhotoRemoved(false)
     setIsEditorOpen(false)
@@ -153,14 +163,14 @@ export default function EditProfile() {
   // Handle Editor Cancel Callback
   const handleEditorCancel = () => {
     setIsEditorOpen(false)
-    setEditorImageSrc(null)
   }
 
   // Handle Re-Opening Editor for Current Photo
   const handleOpenAdjustPhoto = () => {
-    const currentPhoto = tempFilePreview || editForm.profileImage
-    if (currentPhoto && !isPhotoRemoved) {
-      setEditorImageSrc(currentPhoto)
+    const rawPhoto = editForm.avatar?.rawImageSrc || editorImageSrc || tempFilePreview || editForm.profileImage
+    if (rawPhoto && !isPhotoRemoved) {
+      setEditorImageSrc(rawPhoto)
+      setEditorInitialState(editForm.avatar?.editorState || editorInitialState)
       setSelectedFileName('Current Profile Photo')
       setIsEditorOpen(true)
     } else {
@@ -503,6 +513,7 @@ export default function EditProfile() {
         show={isEditorOpen}
         imageSrc={editorImageSrc}
         fileName={selectedFileName}
+        initialState={editorInitialState}
         onCancel={handleEditorCancel}
         onSave={handleEditorSave}
       />

@@ -79,12 +79,13 @@ export const isLikelyFailedScrape = (sp = {}) => {
   const profileImg = sp.profileImage || basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || '';
   const bio = sp.description || sp.bio || basicInfo.about || basicInfo.summary || '';
   const followers = Number(sp.followers || basicInfo.follower_count || basicInfo.followers_count || 0);
-  const posts = Number(sp.posts || basicInfo.connection_count || (sp.recentContent && sp.recentContent.length) || 0);
+  const posts = Number(sp.posts || basicInfo.connection_count || (sp.recentContent && sp.recentContent.length) || (sp.recentPosts && sp.recentPosts.length) || 0);
+  const hasContent = Array.isArray(sp.recentContent) && sp.recentContent.length > 0;
 
   const hasNoImage = !profileImg || String(profileImg).trim() === '';
   const hasNoBio = !bio || String(bio).trim() === '';
   const hasZeroFollowers = followers === 0;
-  const hasZeroPosts = posts === 0;
+  const hasZeroPosts = posts === 0 && !hasContent;
 
   return hasNoImage && hasNoBio && hasZeroFollowers && hasZeroPosts;
 };
@@ -126,13 +127,26 @@ const API_BASE_URL = 'http://localhost:3001/api';
  */
 export const resolveSocialImageUrl = (url = '') => {
   if (!url || typeof url !== 'string') return '';
-  const trimmed = url.trim();
+  let trimmed = url.trim();
   if (!trimmed) return '';
+
+  // Unwrap legacy or nested proxy parameters if present
+  if (trimmed.includes('/proxy?url=')) {
+    try {
+      const idx = trimmed.indexOf('/proxy?url=');
+      const encodedUrl = trimmed.substring(idx + '/proxy?url='.length);
+      const decodedUrl = decodeURIComponent(encodedUrl);
+      if (decodedUrl.startsWith('http://') || decodedUrl.startsWith('https://')) {
+        trimmed = decodedUrl;
+      }
+    } catch (e) {
+      // fallback
+    }
+  }
 
   // Don't proxy if already proxied or data/blob URI
   if (
     trimmed.includes('/api/social/proxy') ||
-    trimmed.includes('/api/instagram/proxy') ||
     trimmed.startsWith('data:') ||
     trimmed.startsWith('blob:')
   ) {

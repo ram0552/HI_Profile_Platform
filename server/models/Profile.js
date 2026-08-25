@@ -85,6 +85,11 @@ const profileSchema = new mongoose.Schema({
         trim: true,
         maxlength: 500
     },
+    bioEnhancementCount: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
     location: {
         type: String,
         default: '',

@@ -66,6 +66,14 @@ const refreshLimiter = rateLimit({
     message: formatResponse('Too many token refresh attempts. Please try again in 15 minutes.')
 });
 
+const bioEnhanceLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: formatResponse('Too many bio enhancement requests. Please try again in 15 minutes.')
+});
+
 module.exports = {
     usernameCheckLimiter,
     registerLimiter,
@@ -73,5 +81,6 @@ module.exports = {
     forgotPasswordLimiter,
     resetPasswordLimiter,
     verificationLimiter,
-    refreshLimiter
+    refreshLimiter,
+    bioEnhanceLimiter
 };

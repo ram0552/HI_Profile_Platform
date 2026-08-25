@@ -207,9 +207,25 @@ const refreshSocialProfileAsync = async (socialProfileId) => {
 
         // Apply platform-specific enrichment fields
         const enrichment = extractPlatformEnrichment(socialProfile.platform, data);
-        Object.assign(socialProfile, enrichment);
+        const updatePayload = {
+            displayName: socialProfile.displayName,
+            profileImage: socialProfile.profileImage,
+            headline: socialProfile.headline,
+            location: socialProfile.location,
+            verified: socialProfile.verified,
+            followers: socialProfile.followers,
+            following: socialProfile.following,
+            posts: socialProfile.posts,
+            description: socialProfile.description,
+            profileUrl: socialProfile.profileUrl,
+            recentContent: socialProfile.recentContent,
+            rawData: socialProfile.rawData,
+            lastFetched: socialProfile.lastFetched,
+            lastUpdated: socialProfile.lastUpdated,
+            ...enrichment
+        };
 
-        await socialProfile.save();
+        await SocialProfile.updateOne({ _id: socialProfile._id }, { $set: updatePayload });
         console.log(`[Background Refresh] Successfully updated ${socialProfile.platform}:${socialProfile.username} in MongoDB.`);
     } catch (error) {
         console.error(`[Background Refresh Error] Failed to refresh social profile ${socialProfileId}:`, error.message);

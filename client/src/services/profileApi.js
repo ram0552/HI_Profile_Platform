@@ -41,3 +41,19 @@ export const changePasswordApi = async ({ currentPassword, newPassword }, access
   });
   return response.json();
 };
+
+/**
+ * Enhance bio using Gemini AI
+ */
+export const enhanceBioApi = async (bio, accessToken) => {
+  const response = await fetch(`${API_BASE_URL}/profile/bio/enhance`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify({ bio })
+  });
+  return response.json();
+};
+

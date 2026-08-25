@@ -44,12 +44,20 @@ router.get('/proxy', async (req, res) => {
         return res.status(400).send('URL is required');
     }
     try {
-        const response = await fetch(url);
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                'Referer': 'https://www.instagram.com/'
+            }
+        });
         if (!response.ok) {
+            console.warn(`[Instagram Proxy Warning] Status ${response.status} fetching URL: ${url}`);
             return res.status(response.status).send('Failed to fetch image from Instagram');
         }
         const contentType = response.headers.get('content-type') || 'image/jpeg';
         res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         res.send(buffer);

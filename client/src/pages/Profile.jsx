@@ -4,13 +4,7 @@ import { useOnboarding } from '../context/OnboardingContext'
 import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
 import EditPhotoModal from '../components/EditPhotoModal'
-
-const BIOS = [
-  'Product designer & creative technologist crafting intuitive digital experiences.',
-  'Software engineer obsessed with clean code, performance, and great UX.',
-  'Building the future of web applications, one line of code at a time.',
-  'Designer, developer, and lifelong learner passionate about open source.'
-]
+import { enhanceBioApi, getProfileMeApi } from '../services/profileApi'
 
 function AvatarDisplay({ avatar }) {
   if (avatar?.type === 'file' && avatar.data) {
@@ -42,11 +36,32 @@ export default function Profile() {
   const [modalSrc, setModalSrc] = useState(null)
   const [fileName, setFileName] = useState('')
 
+  // AI Enhancement state
+  const [isEnhancing, setIsEnhancing] = useState(false)
+  const [remainingEnhancements, setRemainingEnhancements] = useState(2)
+
   useEffect(() => {
     if (user?.fullName) {
       setName(user.fullName)
     }
   }, [user?.fullName])
+
+  // Fetch current enhancement count from server
+  useEffect(() => {
+    const fetchEnhancementCount = async () => {
+      if (!accessToken) return
+      try {
+        const res = await getProfileMeApi(accessToken)
+        if (res.success && res.data) {
+          const count = res.data.enhancementCount ?? res.data.profile?.bioEnhancementCount ?? 0
+          setRemainingEnhancements(Math.max(0, 2 - count))
+        }
+      } catch (err) {
+        console.error('Failed to load profile enhancement count', err)
+      }
+    }
+    fetchEnhancementCount()
+  }, [accessToken])
 
   const avatarBg = avatar?.type === 'emoji' ? avatar.bg : ''
 
@@ -95,6 +110,49 @@ export default function Profile() {
         credentials: 'include',
         body: JSON.stringify({ avatar: updatedAvatar, profileImage: croppedDataUrl })
       }).catch(err => console.error('Failed to sync avatar', err))
+    }
+  }
+
+  const handleEnhanceBio = async () => {
+    if (isEnhancing) return
+    if (!bio || !bio.trim()) {
+      toast('Please enter your bio before enhancing with AI!')
+      return
+    }
+
+    if (!accessToken) {
+      toast('Please log in to use AI Bio Enhancement.')
+      return
+    }
+
+    if (remainingEnhancements <= 0) {
+      toast('AI enhancement limit reached. You can continue editing your bio manually.')
+      return
+    }
+
+    setIsEnhancing(true)
+    try {
+      const res = await enhanceBioApi(bio.trim(), accessToken)
+      if (res.success && res.enhancedBio) {
+        setBio(res.enhancedBio)
+        if (typeof res.remainingEnhancements === 'number') {
+          setRemainingEnhancements(res.remainingEnhancements)
+        } else {
+          setRemainingEnhancements(prev => Math.max(0, prev - 1))
+        }
+        toast('✨ Bio enhanced with AI! Review and edit if needed.')
+      } else {
+        const errorMsg = res.message || 'Failed to enhance bio with AI.'
+        toast(errorMsg)
+        if (typeof res.remainingEnhancements === 'number') {
+          setRemainingEnhancements(res.remainingEnhancements)
+        }
+      }
+    } catch (err) {
+      console.error('[AI Enhancement Error]', err)
+      toast(err.message || 'An error occurred during AI bio enhancement.')
+    } finally {
+      setIsEnhancing(false)
     }
   }
 
@@ -174,22 +232,60 @@ export default function Profile() {
           style={{ width: '100%', maxWidth: 380, border: 'none', background: 'transparent', textAlign: 'center', fontFamily: 'var(--font-heading)', fontSize: '2.2rem', fontWeight: 800, color: '#111', outline: 'none', marginBottom: 24 }}
         />
 
-        {/* Bio Textarea */}
-        <div style={{ position: 'relative', width: '100%', maxWidth: 440, marginBottom: 32 }}>
+        {/* Bio Textarea Container */}
+        <div style={{ position: 'relative', width: '100%', maxWidth: 440, marginBottom: 28, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <textarea
             placeholder="Your bio..."
-            maxLength={160}
+            maxLength={500}
             value={bio}
             onChange={e => setBio(e.target.value)}
-            style={{ width: '100%', height: 110, borderRadius: 12, border: '1.5px solid #E2E2E8', background: '#fff', padding: '16px 42px 16px 16px', boxSizing: 'border-box', fontFamily: 'var(--font-body)', fontSize: '1.05rem', color: '#111', resize: 'none', outline: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.02)' }}
+            style={{
+              width: '100%',
+              height: 110,
+              borderRadius: 12,
+              border: '1.5px solid #E2E2E8',
+              background: '#fff',
+              padding: '16px',
+              boxSizing: 'border-box',
+              fontFamily: 'var(--font-body)',
+              fontSize: '1.05rem',
+              color: '#111',
+              resize: 'none',
+              outline: 'none',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.02)'
+            }}
           />
-          <span
-            onClick={() => setBio(BIOS[Math.floor(Math.random() * BIOS.length)])}
-            title="AI Bio Helper"
-            style={{ position: 'absolute', right: 16, top: 16, fontSize: '1.25rem', color: '#3B82F6', cursor: 'pointer', userSelect: 'none' }}
-          >
-            ✨
-          </span>
+
+          {/* AI Bio Enhancement Bar */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginTop: 10, padding: '0 4px' }}>
+            <button
+              type="button"
+              onClick={handleEnhanceBio}
+              disabled={isEnhancing || remainingEnhancements <= 0 || !bio.trim()}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '7px 14px',
+                borderRadius: 8,
+                background: remainingEnhancements <= 0 ? '#F1F5F9' : (isEnhancing ? '#93C5FD' : '#2563EB'),
+                color: remainingEnhancements <= 0 ? '#94A3B8' : '#FFFFFF',
+                border: 'none',
+                fontFamily: 'var(--font-body)',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                cursor: (remainingEnhancements <= 0 || isEnhancing || !bio.trim()) ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: remainingEnhancements > 0 && !isEnhancing && bio.trim() ? '0 2px 8px rgba(37, 99, 235, 0.2)' : 'none'
+              }}
+            >
+              <span>{isEnhancing ? '✨ Enhancing...' : '✨ Enhance with AI'}</span>
+            </button>
+
+            <span style={{ fontSize: '0.8rem', color: remainingEnhancements === 0 ? '#EF4444' : '#64748B', fontWeight: 500 }}>
+              AI enhancements remaining: <strong>{remainingEnhancements}</strong>
+            </span>
+          </div>
         </div>
 
         {/* Action Buttons */}

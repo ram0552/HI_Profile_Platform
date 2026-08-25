@@ -1,6 +1,7 @@
 const Profile = require('../models/Profile');
 const User = require('../models/User');
 const { syncSetupSocialLinksToBento } = require('../services/bentoSyncService');
+const { enhanceBioWithGemini } = require('../services/geminiService');
 
 /**
  * Helper: Find or create profile for a user
@@ -248,12 +249,17 @@ const getProfileMe = async (req, res) => {
         const profile = await getOrCreateProfile(req.user);
         const user = await User.findById(req.user._id).select('-password -loginHistory -failedLoginAttempts -lockoutUntil');
 
+        const enhancementCount = profile.bioEnhancementCount || 0;
+        const remainingEnhancements = Math.max(0, 2 - enhancementCount);
+
         return res.status(200).json({
             success: true,
             message: 'Profile fetched successfully',
             data: {
                 profile,
-                user
+                user,
+                enhancementCount,
+                remainingEnhancements
             }
         });
     } catch (error) {
@@ -449,6 +455,97 @@ const updateProfileMe = async (req, res) => {
     }
 };
 
+/**
+ * POST /api/profile/bio/enhance
+ * Enhance user bio using Gemini AI (Max 2 times per profile)
+ */
+const enhanceBio = async (req, res) => {
+    try {
+        const { bio } = req.body;
+
+        // 1. Validate bio input
+        if (!bio || typeof bio !== 'string' || !bio.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Bio content is required for AI enhancement.',
+                data: null
+            });
+        }
+
+        const trimmedBio = bio.trim();
+        if (trimmedBio.length > 500) {
+            return res.status(400).json({
+                success: false,
+                message: 'Bio exceeds maximum length of 500 characters.',
+                data: null
+            });
+        }
+
+        // 2. Fetch or create profile for authenticated user
+        const profile = await getOrCreateProfile(req.user);
+
+        // 3. Server-side 2-enhancement limit check
+        const currentCount = profile.bioEnhancementCount || 0;
+        if (currentCount >= 2) {
+            return res.status(400).json({
+                success: false,
+                message: 'AI enhancement limit reached. You can continue editing your bio manually.',
+                enhancementCount: currentCount,
+                remainingEnhancements: 0,
+                data: null
+            });
+        }
+
+        // 4. Call Gemini AI service
+        let enhancedBio;
+        try {
+            enhancedBio = await enhanceBioWithGemini(trimmedBio);
+        } catch (geminiErr) {
+            console.error('[Gemini Bio Enhancement API Error]', geminiErr);
+            // Do NOT increment count if Gemini request fails
+            return res.status(500).json({
+                success: false,
+                message: geminiErr.message || 'Failed to generate enhanced bio with Gemini AI.',
+                enhancementCount: currentCount,
+                remainingEnhancements: Math.max(0, 2 - currentCount),
+                data: null
+            });
+        }
+
+        if (!enhancedBio || !enhancedBio.trim()) {
+            return res.status(500).json({
+                success: false,
+                message: 'Gemini returned an invalid empty bio response.',
+                enhancementCount: currentCount,
+                remainingEnhancements: Math.max(0, 2 - currentCount),
+                data: null
+            });
+        }
+
+        // 5. Increment counter ONLY AFTER successful Gemini response
+        profile.bioEnhancementCount = currentCount + 1;
+        await profile.save();
+
+        const updatedCount = profile.bioEnhancementCount;
+        const remaining = Math.max(0, 2 - updatedCount);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Bio enhanced successfully with AI',
+            enhancedBio: enhancedBio.trim(),
+            enhancementCount: updatedCount,
+            remainingEnhancements: remaining
+        });
+    } catch (error) {
+        console.error('[Enhance Bio Controller Error]', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Internal server error while enhancing bio.',
+            data: null
+        });
+    }
+};
+
 module.exports = {
     uploadAvatar,
     updateBio,
@@ -456,5 +553,6 @@ module.exports = {
     selectTemplate,
     getProfileMe,
     getPublicProfile,
-    updateProfileMe
+    updateProfileMe,
+    enhanceBio
 };

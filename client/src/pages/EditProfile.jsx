@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
-import { getProfileMeApi, updateProfileMeApi } from '../services/profileApi'
+import { getProfileMeApi, updateProfileMeApi, enhanceBioApi } from '../services/profileApi'
 import ResetPasswordSection from '../components/ResetPasswordSection'
 import EditPhotoModal from '../components/EditPhotoModal'
 import {
@@ -36,6 +36,10 @@ export default function EditProfile() {
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const [editorImageSrc, setEditorImageSrc] = useState(null)
   const [selectedFileName, setSelectedFileName] = useState('')
+
+  // AI Enhancement state
+  const [isEnhancing, setIsEnhancing] = useState(false)
+  const [remainingEnhancements, setRemainingEnhancements] = useState(2)
 
   const [editForm, setEditForm] = useState({
     fullName: '',
@@ -75,6 +79,9 @@ export default function EditProfile() {
 
         setProfile(p)
         setUserData(u)
+
+        const count = profileRes.data.enhancementCount ?? p.bioEnhancementCount ?? 0
+        setRemainingEnhancements(Math.max(0, 2 - count))
 
         setEditForm({
           fullName: u.fullName || '',
@@ -190,6 +197,51 @@ export default function EditProfile() {
     }))
     setError(null)
     toast('Profile photo removed. Initials fallback active.')
+  }
+
+  // Handle AI Bio Enhancement
+  const handleEnhanceBio = async () => {
+    if (isEnhancing) return
+    const currentBio = editForm.bio || ''
+    if (!currentBio.trim()) {
+      toast('Please enter your bio before enhancing with AI!')
+      return
+    }
+
+    if (!accessToken) {
+      toast('Please log in to use AI Bio Enhancement.')
+      return
+    }
+
+    if (remainingEnhancements <= 0) {
+      toast('AI enhancement limit reached. You can continue editing your bio manually.')
+      return
+    }
+
+    setIsEnhancing(true)
+    try {
+      const res = await enhanceBioApi(currentBio.trim(), accessToken)
+      if (res.success && res.enhancedBio) {
+        setEditForm(prev => ({ ...prev, bio: res.enhancedBio }))
+        if (typeof res.remainingEnhancements === 'number') {
+          setRemainingEnhancements(res.remainingEnhancements)
+        } else {
+          setRemainingEnhancements(prev => Math.max(0, prev - 1))
+        }
+        toast('✨ Bio enhanced with AI! Review and save your changes.')
+      } else {
+        const errorMsg = res.message || 'Failed to enhance bio with AI.'
+        toast(errorMsg)
+        if (typeof res.remainingEnhancements === 'number') {
+          setRemainingEnhancements(res.remainingEnhancements)
+        }
+      }
+    } catch (err) {
+      console.error('[AI Enhancement Error]', err)
+      toast(err.message || 'An error occurred during AI bio enhancement.')
+    } finally {
+      setIsEnhancing(false)
+    }
   }
 
   // Calculate Initials from Full Name
@@ -441,7 +493,12 @@ export default function EditProfile() {
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#475569', marginBottom: 6 }}>Biography (Bio)</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label style={{ fontSize: 13, fontWeight: 700, color: '#475569' }}>Biography (Bio)</label>
+                <span style={{ fontSize: 12, color: remainingEnhancements === 0 ? '#EF4444' : '#64748B', fontWeight: 500 }}>
+                  AI enhancements remaining: <strong>{remainingEnhancements}</strong>
+                </span>
+              </div>
               <textarea
                 rows={3}
                 value={editForm.bio}
@@ -450,6 +507,30 @@ export default function EditProfile() {
                 style={{ width: '100%', padding: '11px 14px', borderRadius: 10, border: '1px solid #CBD5E1', fontSize: 14, outline: 'none', resize: 'vertical' }}
                 maxLength={500}
               />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={handleEnhanceBio}
+                  disabled={isEnhancing || remainingEnhancements <= 0 || !editForm.bio.trim()}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '8px 16px',
+                    borderRadius: 8,
+                    background: remainingEnhancements <= 0 ? '#F1F5F9' : (isEnhancing ? '#93C5FD' : '#4F46E5'),
+                    color: remainingEnhancements <= 0 ? '#94A3B8' : '#FFFFFF',
+                    border: 'none',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: (remainingEnhancements <= 0 || isEnhancing || !editForm.bio.trim()) ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: remainingEnhancements > 0 && !isEnhancing && editForm.bio.trim() ? '0 2px 8px rgba(79, 70, 229, 0.25)' : 'none'
+                  }}
+                >
+                  <span>{isEnhancing ? '✨ Enhancing...' : '✨ Enhance with AI'}</span>
+                </button>
+              </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 18 }}>

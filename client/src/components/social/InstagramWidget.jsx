@@ -28,10 +28,10 @@ export default function InstagramWidget({ block, socialProfile, loading = false,
   const verified = sp.verified || false;
   const location = sp.location || '';
   const headline = sp.headline || '';
-  const followers = sp.followers !== undefined ? sp.followers : 0;
-  const following = sp.following !== undefined ? sp.following : 0;
-  const posts = sp.posts !== undefined ? sp.posts : 0;
-  const bio = sp.description || '';
+  const followers = Number(sp.followers ?? sp.followersCount ?? sp.followerCount ?? 0);
+  const following = Number(sp.following ?? sp.followingCount ?? sp.followsCount ?? 0);
+  const posts = Number(sp.posts ?? sp.postsCount ?? (recentPosts ? recentPosts.length : 0));
+  const bio = sp.description || sp.bio || sp.biography || sp.about || '';
   const profileUrl = sp.profileUrl || `https://www.instagram.com/${username}/`;
   const lastFetched = sp.lastFetched || null;
   const isFailed = isLikelyFailedScrape(sp);

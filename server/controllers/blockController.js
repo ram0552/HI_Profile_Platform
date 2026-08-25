@@ -244,20 +244,22 @@ const getUserBlocks = async (req, res) => {
             if (spDoc) {
                 const basicInfo = spDoc.basic_info || spDoc.basicInfo || spDoc.rawData?.basic_info || spDoc.rawData?.basicInfo || spDoc.rawData || {};
 
-                const fullName = basicInfo.fullname || basicInfo.fullName || basicInfo.name || spDoc.displayName || spDoc.name || '';
+                const fullName = basicInfo.fullname || basicInfo.fullName || basicInfo.name || spDoc.displayName || spDoc.fullName || spDoc.name || spDoc.username || '';
                 const profileImg = basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || spDoc.profileImage || spDoc.avatarUrl || spDoc.profilePicture || '';
                 const headline = basicInfo.headline || spDoc.headline || '';
                 const location = basicInfo.location || basicInfo.locationFull || spDoc.location || '';
                 const bio = basicInfo.about || basicInfo.summary || basicInfo.bio || spDoc.description || spDoc.bio || '';
-                const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? (spDoc.followers > 0 ? spDoc.followers : null) ?? 0);
-                const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? (spDoc.connectionsCount > 0 ? spDoc.connectionsCount : null) ?? (spDoc.following > 0 ? spDoc.following : null) ?? 0);
+                const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? spDoc.followers ?? spDoc.followersCount ?? 0);
+                const following = Number(spDoc.following ?? spDoc.followingCount ?? basicInfo.following_count ?? basicInfo.followingCount ?? 0);
+                const posts = Number(spDoc.posts ?? spDoc.postsCount ?? basicInfo.posts_count ?? basicInfo.postsCount ?? 0);
+                const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? spDoc.connectionsCount ?? (spDoc.platform !== 'instagram' ? following : 0));
                 const currentCompany = basicInfo.current_company || basicInfo.currentCompanyName || basicInfo.currentCompany || spDoc.currentCompany || '';
 
                 bObj.socialProfile = {
                     ...spDoc,
                     basic_info: basicInfo,
-                    displayName: fullName,
-                    fullName: fullName,
+                    displayName: fullName || spDoc.displayName || spDoc.username,
+                    fullName: fullName || spDoc.displayName || spDoc.username,
                     profileImage: profileImg,
                     avatarUrl: profileImg,
                     profilePicture: profileImg,
@@ -267,10 +269,15 @@ const getUserBlocks = async (req, res) => {
                     bio: bio,
                     followers: followers,
                     followersCount: followers,
+                    following: following,
+                    followingCount: following,
+                    posts: posts,
+                    postsCount: posts,
                     connectionsCount: connections,
                     connections: connections,
-                    following: connections,
-                    currentCompany: currentCompany
+                    currentCompany: currentCompany,
+                    recentContent: spDoc.recentContent || spDoc.recentPosts || [],
+                    recentPosts: spDoc.recentContent || spDoc.recentPosts || []
                 };
 
                 console.log(`[LINKEDIN API DATA] getUserBlocks blockType=${b.blockType}, followers=${followers}, connections=${connections}, headline="${headline}"`);
@@ -354,20 +361,22 @@ const getPublicBlocks = async (req, res) => {
             if (spDoc) {
                 const basicInfo = spDoc.basic_info || spDoc.basicInfo || spDoc.rawData?.basic_info || spDoc.rawData?.basicInfo || spDoc.rawData || {};
 
-                const fullName = basicInfo.fullname || basicInfo.fullName || basicInfo.name || spDoc.displayName || spDoc.name || '';
+                const fullName = basicInfo.fullname || basicInfo.fullName || basicInfo.name || spDoc.displayName || spDoc.fullName || spDoc.name || spDoc.username || '';
                 const profileImg = basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || spDoc.profileImage || spDoc.avatarUrl || spDoc.profilePicture || '';
                 const headline = basicInfo.headline || spDoc.headline || '';
                 const location = basicInfo.location || basicInfo.locationFull || spDoc.location || '';
                 const bio = basicInfo.about || basicInfo.summary || basicInfo.bio || spDoc.description || spDoc.bio || '';
-                const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? (spDoc.followers > 0 ? spDoc.followers : null) ?? 0);
-                const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? (spDoc.connectionsCount > 0 ? spDoc.connectionsCount : null) ?? (spDoc.following > 0 ? spDoc.following : null) ?? 0);
+                const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? spDoc.followers ?? spDoc.followersCount ?? 0);
+                const following = Number(spDoc.following ?? spDoc.followingCount ?? basicInfo.following_count ?? basicInfo.followingCount ?? 0);
+                const posts = Number(spDoc.posts ?? spDoc.postsCount ?? basicInfo.posts_count ?? basicInfo.postsCount ?? 0);
+                const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? spDoc.connectionsCount ?? (spDoc.platform !== 'instagram' ? following : 0));
                 const currentCompany = basicInfo.current_company || basicInfo.currentCompanyName || basicInfo.currentCompany || spDoc.currentCompany || '';
 
                 bObj.socialProfile = {
                     ...spDoc,
                     basic_info: basicInfo,
-                    displayName: fullName,
-                    fullName: fullName,
+                    displayName: fullName || spDoc.displayName || spDoc.username,
+                    fullName: fullName || spDoc.displayName || spDoc.username,
                     profileImage: profileImg,
                     avatarUrl: profileImg,
                     profilePicture: profileImg,
@@ -377,10 +386,15 @@ const getPublicBlocks = async (req, res) => {
                     bio: bio,
                     followers: followers,
                     followersCount: followers,
+                    following: following,
+                    followingCount: following,
+                    posts: posts,
+                    postsCount: posts,
                     connectionsCount: connections,
                     connections: connections,
-                    following: connections,
-                    currentCompany: currentCompany
+                    currentCompany: currentCompany,
+                    recentContent: spDoc.recentContent || spDoc.recentPosts || [],
+                    recentPosts: spDoc.recentContent || spDoc.recentPosts || []
                 };
 
                 console.log(`[LINKEDIN API DATA] getPublicBlocks blockType=${b.blockType}, followers=${followers}, connections=${connections}, headline="${headline}"`);

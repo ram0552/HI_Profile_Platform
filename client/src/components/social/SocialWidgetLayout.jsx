@@ -363,8 +363,14 @@ export default function SocialWidgetLayout({
       {/* Rich Content List */}
       <div style={{ flexGrow: 1, overflowY: 'auto', marginBottom: 8, minHeight: 0 }}>
         {recentContent && recentContent.length > 0 && renderRecentItem ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {recentContent.slice(0, 3).map((item, idx) => renderRecentItem(item, idx))}
+          <div
+            style={
+              platform === 'instagram'
+                ? { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }
+                : { display: 'flex', flexDirection: 'column', gap: 8 }
+            }
+          >
+            {recentContent.slice(0, platform === 'instagram' ? 6 : 3).map((item, idx) => renderRecentItem(item, idx))}
           </div>
         ) : (
           <SocialEmptyState platform={platform} message={emptyText} />

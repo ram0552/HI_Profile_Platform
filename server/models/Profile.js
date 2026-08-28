@@ -54,6 +54,47 @@ const projectSchema = new mongoose.Schema({
     url: { type: String, default: '', trim: true }
 }, { _id: true });
 
+const customizationSchema = new mongoose.Schema({
+    designStyle: {
+        type: String,
+        enum: ['classic', 'glass', 'brutalist', 'elevated', 'minimal', 'outline', 'softUI', 'retroTerminal', 'gradientMesh', 'editorial', 'duotone', 'frostedDark'],
+        default: 'classic'
+    },
+    colorTheme: {
+        type: String,
+        enum: ['default', 'sunset', 'rose', 'skyBreeze', 'sandNeutral', 'mintFresh', 'lavenderMist', 'peachCream', 'midnight', 'cyberpunk', 'emerald', 'royalPurple', 'obsidian', 'crimsonEmber', 'oceanDepth', 'graphiteSteel'],
+        default: 'default'
+    },
+    typography: {
+        type: String,
+        enum: ['inter', 'outfit', 'jakarta', 'manrope', 'spaceGrotesk', 'playfair', 'lora', 'cormorant', 'robotoMono', 'jetbrainsMono', 'spaceMono', 'poppins', 'bricolage'],
+        default: 'inter'
+    },
+    borderRadius: {
+        type: String,
+        enum: ['sharp', 'subtle', 'small', 'medium', 'large', 'extraLarge', 'rounded', 'pill'],
+        default: 'medium'
+    },
+    shadow: {
+        type: String,
+        enum: ['none', 'whisper', 'soft', 'elevated', 'strong', 'neo3d', 'glow', 'offsetBrutalist'],
+        default: 'soft'
+    },
+    spacing: {
+        type: String,
+        enum: ['tight', 'compact', 'comfortable', 'relaxed', 'spacious', 'airy'],
+        default: 'comfortable'
+    },
+    updatedAt: {
+        type: Date,
+        default: Date.now
+    },
+    version: {
+        type: Number,
+        default: 1
+    }
+}, { _id: false });
+
 const profileSchema = new mongoose.Schema({
     userId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -103,6 +144,19 @@ const profileSchema = new mongoose.Schema({
         type: String,
         enum: ['bento', 'timeline', 'classic', 'modern', 'developer'],
         default: 'bento'
+    },
+    customization: {
+        type: customizationSchema,
+        default: () => ({
+            designStyle: 'classic',
+            colorTheme: 'default',
+            typography: 'inter',
+            borderRadius: 'medium',
+            shadow: 'soft',
+            spacing: 'comfortable',
+            updatedAt: new Date(),
+            version: 1
+        })
     },
     theme: {
         type: String,

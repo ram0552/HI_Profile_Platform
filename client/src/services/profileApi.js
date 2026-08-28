@@ -57,3 +57,28 @@ export const enhanceBioApi = async (bio, accessToken) => {
   return response.json();
 };
 
+/**
+ * Fetch Bento design customization for a username (Public)
+ */
+export const getProfileCustomizationApi = async (username) => {
+  const cleanUsername = (username || '').toLowerCase().trim().replace(/^@/, '');
+  const response = await fetch(`${API_BASE_URL}/profiles/${cleanUsername}/customization`);
+  return response.json();
+};
+
+/**
+ * Update Bento design customization for a profile (Authenticated owner)
+ */
+export const updateProfileCustomizationApi = async (username, customizationData, accessToken) => {
+  const cleanUsername = (username || '').toLowerCase().trim().replace(/^@/, '');
+  const response = await fetch(`${API_BASE_URL}/profiles/${cleanUsername}/customization`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(customizationData)
+  });
+  return response.json();
+};
+

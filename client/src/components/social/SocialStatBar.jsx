@@ -12,10 +12,10 @@ export default function SocialStatBar({ stats = [], accentColor = '#4F46E5', com
         display: 'grid',
         gridTemplateColumns: `repeat(${Math.min(stats.length, 3)}, 1fr)`,
         gap: compact ? 4 : 6,
-        background: '#F8FAFC',
+        background: 'var(--bento-accent-light, #F8FAFC)',
         padding: compact ? '3px 4px' : 6,
         borderRadius: compact ? 10 : 14,
-        border: '1px solid #E2E8F0',
+        border: '1px solid var(--bento-border-color, #E2E8F0)',
         marginBottom: compact ? 0 : 10,
         width: '100%',
         boxSizing: 'border-box',
@@ -32,28 +32,28 @@ export default function SocialStatBar({ stats = [], accentColor = '#4F46E5', com
             key={idx}
             title={`${exact} ${item.label}`}
             style={{
-              background: '#FFFFFF',
+              background: 'var(--bento-surface-bg, #FFFFFF)',
               borderRadius: compact ? 6 : 10,
               padding: compact ? '3px 2px' : '6px 4px',
               textAlign: 'center',
-              border: '1px solid #F1F5F9',
+              border: '1px solid var(--bento-border-color, #F1F5F9)',
               boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
               transition: 'transform 0.15s ease, border-color 0.15s ease',
               cursor: 'default'
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-1px)';
-              e.currentTarget.style.borderColor = '#CBD5E1';
+              e.currentTarget.style.borderColor = 'var(--bento-accent, #CBD5E1)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.borderColor = '#F1F5F9';
+              e.currentTarget.style.borderColor = 'var(--bento-border-color, #F1F5F9)';
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: compact ? '0.76rem' : '0.92rem', color: '#0F172A', fontFamily: 'Inter, monospace', lineHeight: 1.1 }}>
+            <div style={{ fontWeight: 800, fontSize: compact ? '0.76rem' : '0.92rem', color: 'var(--bento-text-primary, #0F172A)', fontFamily: 'Inter, monospace', lineHeight: 1.1 }}>
               {formatted}
             </div>
-            <div style={{ fontSize: compact ? '0.58rem' : '0.68rem', color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginTop: compact ? 1 : 2 }}>
+            <div style={{ fontSize: compact ? '0.58rem' : '0.68rem', color: 'var(--bento-text-secondary, #64748B)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.02em', marginTop: compact ? 1 : 2 }}>
               {item.label}
             </div>
           </div>

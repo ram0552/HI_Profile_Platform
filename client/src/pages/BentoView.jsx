@@ -13,12 +13,23 @@ import {
   deleteBlockApi,
   reorderBlocksApi
 } from '../services/bentoApi'
+import {
+  getProfileCustomizationApi,
+  updateProfileCustomizationApi
+} from '../services/profileApi'
 import { fetchSocialStats } from '../services/socialApi'
 import InstagramWidget from '../components/social/InstagramWidget'
 import GitHubWidget from '../components/social/GitHubWidget'
 import LinkedInWidget from '../components/social/LinkedInWidget'
 import YouTubeWidget from '../components/social/YouTubeWidget'
 import TwitterWidget from '../components/social/TwitterWidget'
+import DesignRail from '../components/customization/DesignRail'
+import {
+  DEFAULT_CUSTOMIZATION,
+  getCustomizationCssVariables,
+  getThemeFamily,
+  SPACING_OPTIONS
+} from '../config/designTokens'
 
 function convertGoogleDriveUrl(url) {
   if (!url || typeof url !== 'string') return url;
@@ -132,6 +143,137 @@ export default function BentoView({ isPublic = false }) {
   // Social Cache State
   const [socialStats, setSocialStats] = useState({})
 
+  // Customization State & Database Persistence
+  const [customization, setCustomization] = useState(() => {
+    const cacheKey = `hiprofile_bento_customization_${targetUsername || 'default'}`;
+    try {
+      const saved = localStorage.getItem(cacheKey);
+      if (saved) {
+        return { ...DEFAULT_CUSTOMIZATION, ...JSON.parse(saved) };
+      }
+    } catch (e) { }
+    return DEFAULT_CUSTOMIZATION;
+  });
+  const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'error'
+  const pendingUpdatesRef = useRef({});
+  const saveTimeoutRef = useRef(null);
+  const retryTimeoutRef = useRef(null);
+  const isSavingRef = useRef(false);
+
+  const currentSpacingGap = SPACING_OPTIONS.find(s => s.id === customization.spacing)?.px ?? 24;
+
+  // Hydrate customization state from authoritative MongoDB data
+  const applyHydratedCustomization = useCallback((rawCust, usernameKey) => {
+    if (!rawCust || typeof rawCust !== 'object') return;
+    const validated = {
+      designStyle: rawCust.designStyle || DEFAULT_CUSTOMIZATION.designStyle,
+      colorTheme: rawCust.colorTheme || DEFAULT_CUSTOMIZATION.colorTheme,
+      typography: rawCust.typography || DEFAULT_CUSTOMIZATION.typography,
+      borderRadius: rawCust.borderRadius || DEFAULT_CUSTOMIZATION.borderRadius,
+      shadow: rawCust.shadow || DEFAULT_CUSTOMIZATION.shadow,
+      spacing: rawCust.spacing || DEFAULT_CUSTOMIZATION.spacing
+    };
+    setCustomization(validated);
+    const effectiveUser = usernameKey || targetUsername || authUser?.username || 'default';
+    const cacheKey = `hiprofile_bento_customization_${effectiveUser}`;
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify(validated));
+    } catch (e) { }
+  }, [targetUsername, authUser]);
+
+  // Actual debounced API save execution
+  const performSave = useCallback(async (payload, retryCount = 0) => {
+    const effectiveUsername = targetUsername || authUser?.username;
+    if (!effectiveUsername || !accessToken) {
+      setSaveStatus('saved');
+      return;
+    }
+
+    setSaveStatus('saving');
+    isSavingRef.current = true;
+
+    try {
+      const res = await updateProfileCustomizationApi(effectiveUsername, payload, accessToken);
+      if (res && (res.success || res.designStyle || res.data)) {
+        pendingUpdatesRef.current = {};
+        setSaveStatus('saved');
+        isSavingRef.current = false;
+      } else {
+        throw new Error(res?.message || 'Save failed');
+      }
+    } catch (err) {
+      console.warn('[Customization Save Error - Scheduling Quiet Retry]', err);
+      isSavingRef.current = false;
+      setSaveStatus('error');
+
+      // Auto-retry with backoff (up to 3 retries)
+      if (retryCount < 3) {
+        if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+        const delay = Math.min(2500 * Math.pow(1.5, retryCount), 7000);
+        retryTimeoutRef.current = setTimeout(() => {
+          performSave(payload, retryCount + 1);
+        }, delay);
+      }
+    }
+  }, [targetUsername, authUser, accessToken]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+    };
+  }, []);
+
+  const handleUpdateCustomization = useCallback((newValues) => {
+    // 1. Optimistic UI update immediately (never blocks or reverts live preview)
+    setCustomization(prev => {
+      const updated = { ...prev, ...newValues };
+      const effectiveUser = targetUsername || authUser?.username || 'default';
+      const cacheKey = `hiprofile_bento_customization_${effectiveUser}`;
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
+      } catch (e) { }
+      return updated;
+    });
+
+    // 2. Accumulate pending updates
+    pendingUpdatesRef.current = { ...pendingUpdatesRef.current, ...newValues };
+
+    // 3. Mark saving and debounce backend write (600ms)
+    setSaveStatus('saving');
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+
+    saveTimeoutRef.current = setTimeout(() => {
+      const payload = { ...pendingUpdatesRef.current };
+      performSave(payload);
+    }, 600);
+  }, [targetUsername, authUser, performSave]);
+
+  const handleResetCustomization = useCallback(() => {
+    // 1. Optimistic UI update to default values
+    setCustomization(DEFAULT_CUSTOMIZATION);
+    const effectiveUser = targetUsername || authUser?.username || 'default';
+    const cacheKey = `hiprofile_bento_customization_${effectiveUser}`;
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify(DEFAULT_CUSTOMIZATION));
+    } catch (e) { }
+    toast('Customization reset to default');
+
+    // 2. Set pending updates to complete default object
+    pendingUpdatesRef.current = { ...DEFAULT_CUSTOMIZATION };
+
+    // 3. Mark saving and debounce backend write (600ms)
+    setSaveStatus('saving');
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+
+    saveTimeoutRef.current = setTimeout(() => {
+      performSave(DEFAULT_CUSTOMIZATION);
+    }, 600);
+  }, [targetUsername, authUser, toast, performSave]);
+
   // Container Width & Drag/Resize State
   const containerRef = useRef(null)
   const [containerWidth, setContainerWidth] = useState(0)
@@ -172,6 +314,32 @@ export default function BentoView({ isPublic = false }) {
     return () => window.removeEventListener('pointerdown', handleClickOutside);
   }, []);
 
+  // Synchronize active Bento Canvas theme tokens to document.body and root
+  useEffect(() => {
+    const customVars = getCustomizationCssVariables(customization);
+    const originalBg = document.body.style.backgroundColor;
+    const originalColor = document.body.style.color;
+    document.body.classList.add('bento-page-active');
+
+    const canvasBg = customVars['--bento-canvas-bg'] || '#F8FAFC';
+    const textPrimary = customVars['--bento-text-primary'] || '#0F172A';
+    document.body.style.backgroundColor = canvasBg;
+    document.body.style.color = textPrimary;
+
+    Object.entries(customVars).forEach(([key, val]) => {
+      document.body.style.setProperty(key, val);
+    });
+
+    return () => {
+      document.body.classList.remove('bento-page-active');
+      document.body.style.backgroundColor = originalBg;
+      document.body.style.color = originalColor;
+      Object.keys(customVars).forEach((key) => {
+        document.body.style.removeProperty(key);
+      });
+    };
+  }, [customization]);
+
   const timeoutRef = useRef(null);
   const hasLoadedDataRef = useRef(false);
   const loadedSocialKeysRef = useRef(new Set());
@@ -202,7 +370,13 @@ export default function BentoView({ isPublic = false }) {
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
           return;
         }
-        const data = await getPublicProfileAndBlocks(targetUsername);
+        const [data, custRes] = await Promise.all([
+          getPublicProfileAndBlocks(targetUsername).catch(err => {
+            console.warn('[Public Profile & Blocks Fetch Warning]', err);
+            return null;
+          }),
+          getProfileCustomizationApi(targetUsername).catch(() => null)
+        ]);
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
 
         if (data && data.success && data.data) {
@@ -218,6 +392,13 @@ export default function BentoView({ isPublic = false }) {
           }));
           setGridBlocks(placeBlocks(rawBlocks));
           setLoadError(null);
+
+          // Authoritative Customization Hydration for Visitor View
+          if (custRes && (custRes.success || custRes.designStyle || custRes.data)) {
+            applyHydratedCustomization(custRes.data || custRes, targetUsername);
+          } else if (data.data.profile?.customization) {
+            applyHydratedCustomization(data.data.profile.customization, targetUsername);
+          }
         } else {
           if (!hasLoadedDataRef.current) {
             setLoadError(data?.message || 'Profile not found.');
@@ -231,7 +412,9 @@ export default function BentoView({ isPublic = false }) {
           return;
         }
 
-        const [profRes, blocksData] = await Promise.all([
+        const effectiveUser = targetUsername || authUser?.username;
+
+        const [profRes, blocksData, custRes] = await Promise.all([
           fetch('http://localhost:3001/api/profile/me', {
             headers: { Authorization: `Bearer ${accessToken}` }
           }).catch(err => {
@@ -241,7 +424,8 @@ export default function BentoView({ isPublic = false }) {
           getUserBlocks(accessToken).catch(err => {
             console.warn('[User Blocks Fetch Warning]', err);
             return { success: false, data: [] };
-          })
+          }),
+          effectiveUser ? getProfileCustomizationApi(effectiveUser).catch(() => null) : Promise.resolve(null)
         ]);
 
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -252,8 +436,18 @@ export default function BentoView({ isPublic = false }) {
             if (profData.success && profData.data) {
               hasLoadedDataRef.current = true;
               setProfileData(profData.data);
+
+              // Hydrate customization from Profile Me payload if available
+              if (profData.data.profile?.customization) {
+                applyHydratedCustomization(profData.data.profile.customization, effectiveUser);
+              }
             }
           } catch (e) { }
+        }
+
+        // Authoritative Customization Hydration from Customization Endpoint
+        if (custRes && (custRes.success || custRes.designStyle || custRes.data)) {
+          applyHydratedCustomization(custRes.data || custRes, effectiveUser);
         }
 
         if (blocksData && blocksData.success) {
@@ -535,7 +729,7 @@ export default function BentoView({ isPublic = false }) {
     }
 
     const activeCols = getActiveColumns(containerWidth);
-    const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols);
+    const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols, currentSpacingGap);
 
     const cardEl = e.currentTarget;
     const pointerId = e.pointerId;
@@ -643,7 +837,7 @@ export default function BentoView({ isPublic = false }) {
         }
 
         const activeCols = getActiveColumns(containerWidth);
-        const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols);
+        const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols, currentSpacingGap);
 
         const { snapX, snapY } = calculateDragSnapWithHysteresis(
           currentLeft,
@@ -775,7 +969,7 @@ export default function BentoView({ isPublic = false }) {
     const currentPointerY = e.clientY;
 
     const activeCols = getActiveColumns(containerWidth);
-    const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols);
+    const { colWidth, rowHeight } = getGridDimensions(containerWidth, activeCols, currentSpacingGap);
 
     const {
       direction,
@@ -1199,23 +1393,75 @@ export default function BentoView({ isPublic = false }) {
     )
   );
 
+  const customVars = getCustomizationCssVariables(customization);
+  const themeFamily = getThemeFamily(customization.colorTheme);
+  const styleClass = `bento-style-${customization.designStyle}`;
+  const themeClass = `bento-theme-${customization.colorTheme} bento-theme-mode-${themeFamily}`;
+
+  const activeCols = getActiveColumns(containerWidth);
+  const { colWidth, rowHeight, gap } = getGridDimensions(containerWidth, activeCols, currentSpacingGap);
+  const maxRow = gridBlocks.reduce((acc, b) => Math.max(acc, (b.y || 0) + (b.h || 1)), 0);
+  const calculatedGridHeight = gridBlocks.length === 0 ? 400 : Math.max(400, maxRow * rowHeight + 40);
+
   return (
-    <div style={{ minHeight: '100vh', background: '#F8FAFC', paddingBottom: 60, fontFamily: 'Inter, sans-serif', color: '#1E293B' }}>
+    <div
+      className={`bento-profile-wrapper bento-customization-surface ${styleClass} ${themeClass}`}
+      style={{
+        ...customVars,
+        minHeight: '100vh',
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--bento-canvas-bg, #F8FAFC)',
+        paddingBottom: 80,
+        fontFamily: 'var(--bento-font-family, Inter, sans-serif)',
+        color: 'var(--bento-text-primary, #1E293B)',
+        position: 'relative'
+      }}
+    >
 
       {/* Header Bar */}
-      <header style={{ height: 70, borderBottom: '1px solid #E2E8F0', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px', position: 'sticky', top: 0, zIndex: 100 }}>
+      <header style={{ height: 70, borderBottom: '1px solid var(--bento-border-color, #E2E8F0)', background: 'var(--bento-surface-bg, #FFFFFF)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px', position: 'sticky', top: 0, zIndex: 80 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: '1.5rem', fontWeight: 900, background: 'linear-gradient(135deg, #4F46E5, #9333EA)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', cursor: 'pointer' }} onClick={() => navigate('/')}>
             HiProfile
           </span>
-          <span style={{ fontSize: '0.85rem', background: '#EEF2FF', color: '#4F46E5', padding: '2px 8px', borderRadius: 12, fontWeight: 700 }}>Bento</span>
+          <span style={{ fontSize: '0.85rem', background: 'var(--bento-accent-light, #EEF2FF)', color: 'var(--bento-accent, #4F46E5)', padding: '2px 8px', borderRadius: 12, fontWeight: 700 }}>Bento</span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {!isPublicView && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                color: saveStatus === 'saving' ? '#D97706' : (saveStatus === 'error' ? '#DC2626' : '#059669'),
+                background: saveStatus === 'saving' ? '#FEF3C7' : (saveStatus === 'error' ? '#FEE2E2' : '#ECFDF5'),
+                padding: '4px 10px',
+                borderRadius: 12,
+                marginRight: 2,
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: 'currentColor'
+                }}
+              />
+              <span>{saveStatus === 'saving' ? 'Saving…' : (saveStatus === 'error' ? "Couldn't save — retrying" : 'Saved')}</span>
+            </div>
+          )}
+
           {isOwner && (
             <button
               onClick={() => navigate('/dashboard')}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#EEF2FF', color: '#4F46E5', border: '1px solid #C7D2FE', padding: '8px 14px', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.15s' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bento-accent-light, #EEF2FF)', color: 'var(--bento-accent, #4F46E5)', border: '1px solid var(--bento-border-color, #C7D2FE)', padding: '8px 14px', borderRadius: 10, fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.15s' }}
             >
               <LayoutDashboard size={16} />
               <span>Dashboard</span>
@@ -1226,14 +1472,14 @@ export default function BentoView({ isPublic = false }) {
             <>
               <button
                 onClick={() => setIsPickerOpen(true)}
-                style={{ background: 'linear-gradient(135deg, #4F46E5, #6366F1)', color: '#FFFFFF', border: 'none', padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 14px rgba(79,70,229,0.3)' }}
+                style={{ background: 'var(--bento-accent, #4F46E5)', color: '#FFFFFF', border: 'none', padding: '10px 20px', borderRadius: 10, fontWeight: 700, fontSize: '0.95rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 14px rgba(79,70,229,0.3)' }}
               >
                 <span style={{ fontSize: '1.2rem' }}>+</span> Add Block
               </button>
 
               <button
                 onClick={() => window.open(`/${profileObj.username || authUser?.username}`, '_blank')}
-                style={{ background: '#F1F5F9', color: '#334155', border: '1px solid #CBD5E1', padding: '10px 16px', borderRadius: 10, fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
+                style={{ background: 'var(--bento-surface-bg, #F1F5F9)', color: 'var(--bento-text-secondary, #334155)', border: '1px solid var(--bento-border-color, #CBD5E1)', padding: '10px 16px', borderRadius: 10, fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer' }}
               >
                 Public Link ↗
               </button>
@@ -1243,18 +1489,18 @@ export default function BentoView({ isPublic = false }) {
       </header>
 
       {/* Main Profile Container */}
-      <main style={{ maxWidth: 1080, margin: '40px auto 0', padding: '0 24px' }}>
+      <main style={{ maxWidth: 1080, width: '100%', margin: '40px auto 0', padding: '0 24px', flexGrow: 1, boxSizing: 'border-box' }}>
 
         {/* Profile Card Header — Centered Hero Layout */}
         <section
           className="bento-hero-header"
           style={{
             position: 'relative',
-            background: '#FFFFFF',
-            borderRadius: 28,
+            background: 'var(--bento-surface-bg, #FFFFFF)',
+            borderRadius: 'var(--bento-radius, 28px)',
             padding: '48px 32px 40px',
-            border: '1px solid #E2E8F0',
-            boxShadow: '0 10px 30px -5px rgba(15, 23, 42, 0.05), 0 4px 12px -2px rgba(15, 23, 42, 0.03)',
+            border: customization.designStyle === 'brutalist' ? '2.5px solid var(--bento-text-primary, #0F172A)' : '1px solid var(--bento-border-color, #E2E8F0)',
+            boxShadow: 'var(--bento-shadow, 0 10px 30px -5px rgba(15, 23, 42, 0.05))',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -1263,9 +1509,6 @@ export default function BentoView({ isPublic = false }) {
             overflow: 'hidden'
           }}
         >
-          {/* Floating Add Block Button in Top-Right Corner */}
-
-
           {/* Centered Large Profile Avatar Ring */}
           <div
             className="bento-avatar-wrapper"
@@ -1275,8 +1518,8 @@ export default function BentoView({ isPublic = false }) {
               height: 160,
               borderRadius: '50%',
               padding: 4,
-              background: 'linear-gradient(135deg, #6366F1 0%, #A855F7 50%, #EC4899 100%)',
-              boxShadow: '0 12px 32px -4px rgba(99, 102, 241, 0.3)',
+              background: 'var(--bento-hero-gradient, linear-gradient(135deg, #6366F1 0%, #A855F7 50%, #EC4899 100%))',
+              boxShadow: '0 12px 32px -4px var(--bento-accent-glow, rgba(99, 102, 241, 0.3))',
               marginBottom: 20,
               flexShrink: 0
             }}
@@ -1286,9 +1529,9 @@ export default function BentoView({ isPublic = false }) {
                 width: '100%',
                 height: '100%',
                 borderRadius: '50%',
-                border: '4px solid #FFFFFF',
+                border: '4px solid var(--bento-surface-bg, #FFFFFF)',
                 overflow: 'hidden',
-                background: '#F8FAFC',
+                background: 'var(--bento-canvas-bg, #F8FAFC)',
                 boxSizing: 'border-box',
                 display: 'flex',
                 alignItems: 'center',
@@ -1309,7 +1552,7 @@ export default function BentoView({ isPublic = false }) {
                 height: 22,
                 borderRadius: '50%',
                 background: '#10B981',
-                border: '3.5px solid #FFFFFF',
+                border: '3.5px solid var(--bento-surface-bg, #FFFFFF)',
                 boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
                 zIndex: 5
               }}
@@ -1318,11 +1561,11 @@ export default function BentoView({ isPublic = false }) {
 
           {/* Centered User Info Hierarchy */}
           <div className="bento-hero-text" style={{ maxWidth: 640, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <h1 style={{ margin: 0, fontSize: '2.1rem', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+            <h1 style={{ margin: 0, fontSize: '2.1rem', fontWeight: 800, color: 'var(--bento-text-primary, #0F172A)', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
               {name}
             </h1>
 
-            <p style={{ margin: '6px 0 12px', fontSize: '1rem', color: '#6366F1', fontWeight: 700, letterSpacing: '0.01em' }}>
+            <p style={{ margin: '6px 0 12px', fontSize: '1rem', color: 'var(--bento-accent, #6366F1)', fontWeight: 700, letterSpacing: '0.01em' }}>
               @{profileObj.username || targetUsername}
             </p>
 
@@ -1331,7 +1574,7 @@ export default function BentoView({ isPublic = false }) {
                 style={{
                   margin: 0,
                   fontSize: '1.02rem',
-                  color: '#475569',
+                  color: 'var(--bento-text-secondary, #475569)',
                   lineHeight: '1.6',
                   maxWidth: 580,
                   fontWeight: 500,
@@ -1349,16 +1592,13 @@ export default function BentoView({ isPublic = false }) {
         </section>
 
         {/* Bento Grid */}
-        <div ref={containerRef} style={{ position: 'relative', minHeight: 400, width: '100%' }}>
+        <div ref={containerRef} style={{ position: 'relative', height: `${calculatedGridHeight}px`, minHeight: 400, width: '100%', transition: 'height 0.2s ease' }}>
           {/* Resize Dimension Readout Badge Overlay */}
           {activeResize && (() => {
             const targetX = activeResize.snapX;
             const targetY = activeResize.snapY;
             const targetW = activeResize.snapW;
             const targetH = activeResize.snapH;
-
-            const activeCols = getActiveColumns(containerWidth);
-            const { colWidth, rowHeight, gap } = getGridDimensions(containerWidth, activeCols);
 
             return (
               <div
@@ -1374,7 +1614,7 @@ export default function BentoView({ isPublic = false }) {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: '#4F46E5',
+                  color: 'var(--bento-accent, #4F46E5)',
                   fontWeight: 800,
                   fontSize: '0.9rem'
                 }}
@@ -1385,14 +1625,14 @@ export default function BentoView({ isPublic = false }) {
           })()}
 
           {gridBlocks.length === 0 ? (
-            <div style={{ padding: '60px 20px', background: '#FFFFFF', borderRadius: 20, border: '2px dashed #CBD5E1', textAlign: 'center' }}>
+            <div style={{ padding: '60px 20px', background: 'var(--bento-surface-bg, #FFFFFF)', borderRadius: 'var(--bento-radius, 20px)', border: '2px dashed var(--bento-border-color, #CBD5E1)', textAlign: 'center' }}>
               <span style={{ fontSize: '3rem', display: 'block', marginBottom: 12 }}>✨</span>
-              <h3 style={{ margin: '0 0 8px', fontSize: '1.3rem', fontWeight: 700, color: '#1E293B' }}>Your Bento Profile is empty</h3>
-              <p style={{ color: '#64748B', margin: '0 0 20px', fontSize: '0.95rem' }}>Start adding blocks to customize your public profile page.</p>
+              <h3 style={{ margin: '0 0 8px', fontSize: '1.3rem', fontWeight: 700, color: 'var(--bento-text-primary, #1E293B)' }}>Your Bento Profile is empty</h3>
+              <p style={{ color: 'var(--bento-text-secondary, #64748B)', margin: '0 0 20px', fontSize: '0.95rem' }}>Start adding blocks to customize your public profile page.</p>
               {!isPublicView && (
                 <button
                   onClick={() => setIsPickerOpen(true)}
-                  style={{ background: '#4F46E5', color: '#FFFFFF', border: 'none', padding: '12px 24px', borderRadius: 10, fontWeight: 700, cursor: 'pointer' }}
+                  style={{ background: 'var(--bento-accent, #4F46E5)', color: '#FFFFFF', border: 'none', padding: '12px 24px', borderRadius: 10, fontWeight: 700, cursor: 'pointer' }}
                 >
                   + Add Block
                 </button>
@@ -1400,9 +1640,6 @@ export default function BentoView({ isPublic = false }) {
             </div>
           ) : (
             gridBlocks.map((block, idx) => {
-              const activeCols = getActiveColumns(containerWidth);
-              const { colWidth, rowHeight, gap } = getGridDimensions(containerWidth, activeCols);
-
               const isDragging = draggedBlockId === block.id;
               const isSelected = selectedBlockId === block.id;
               const blockX = isDragging && activeDrag ? activeDrag.originalX : block.x;
@@ -1411,7 +1648,6 @@ export default function BentoView({ isPublic = false }) {
               const top = blockY * rowHeight;
               const width = block.w * colWidth - gap;
               const height = block.h * rowHeight - gap;
-
 
               const config = block.configuration || {};
 
@@ -1430,9 +1666,10 @@ export default function BentoView({ isPublic = false }) {
                     top: `${top}px`,
                     width: `${width}px`,
                     height: `${height}px`,
-                    background: config.bg || '#FFFFFF',
-                    borderRadius: 22,
-                    border: isSelected ? '2px solid #4F46E5' : '1px solid #E2E8F0',
+                    background: config.bg || 'var(--bento-surface-bg, #FFFFFF)',
+                    borderRadius: 'var(--bento-radius, 22px)',
+                    border: isSelected ? '2px solid var(--bento-accent, #4F46E5)' : (customization.designStyle === 'brutalist' ? '2.5px solid var(--bento-text-primary, #0F172A)' : '1px solid var(--bento-border-color, #E2E8F0)'),
+                    boxShadow: 'var(--bento-shadow, 0 4px 16px rgba(0,0,0,0.05))',
                     zIndex: isDragging ? 100 : (isSelected ? 20 : 1),
                     padding: (block.w <= 1 || block.h <= 1) ? 12 : 20,
                     boxSizing: 'border-box',
@@ -1552,7 +1789,7 @@ export default function BentoView({ isPublic = false }) {
                   {block.blockType === 'emoji' && (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
                       <span className="bento-emoji-display" style={{ fontSize: '3.5rem', lineHeight: 1, display: 'inline-block' }}>{config.emoji || '😊'}</span>
-                      {config.title && <span style={{ marginTop: 8, fontWeight: 700, fontSize: '0.9rem', color: '#334155' }}>{config.title}</span>}
+                      {config.title && <span style={{ marginTop: 8, fontWeight: 700, fontSize: '0.9rem', color: 'var(--bento-text-secondary, #334155)' }}>{config.title}</span>}
                     </div>
                   )}
 
@@ -1572,9 +1809,9 @@ export default function BentoView({ isPublic = false }) {
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <span style={{ fontSize: '1.5rem' }}>🔗</span>
-                          <h4 style={{ margin: 0, fontWeight: 700, fontSize: '1.1rem', color: '#0F172A' }}>{config.title || 'Link'}</h4>
+                          <h4 style={{ margin: 0, fontWeight: 700, fontSize: '1.1rem', color: 'var(--bento-text-primary, #0F172A)' }}>{config.title || 'Link'}</h4>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#4F46E5', fontWeight: 600, fontSize: '0.85rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: 'var(--bento-accent, #4F46E5)', fontWeight: 600, fontSize: '0.85rem' }}>
                           <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '80%' }}>
                             {rawUrl}
                           </span>
@@ -1587,8 +1824,8 @@ export default function BentoView({ isPublic = false }) {
                   {/* Text Card */}
                   {block.blockType === 'text' && (
                     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                      {config.title && <h4 style={{ margin: '0 0 8px', fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>{config.title}</h4>}
-                      <p style={{ margin: 0, color: '#475569', fontSize: '0.9rem', lineHeight: '1.5', flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {config.title && <h4 style={{ margin: '0 0 8px', fontWeight: 700, fontSize: '1rem', color: 'var(--bento-text-primary, #0F172A)' }}>{config.title}</h4>}
+                      <p style={{ margin: 0, color: 'var(--bento-text-secondary, #475569)', fontSize: '0.9rem', lineHeight: '1.5', flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {config.description}
                       </p>
                     </div>
@@ -1610,11 +1847,11 @@ export default function BentoView({ isPublic = false }) {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {/* Title & Stats */}
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
-                            <h4 style={{ margin: 0, fontWeight: 700, fontSize: '1.05rem', color: '#0F172A' }}>
+                            <h4 style={{ margin: 0, fontWeight: 700, fontSize: '1.05rem', color: 'var(--bento-text-primary, #0F172A)' }}>
                               {config.title || 'Checklist'}
                             </h4>
                             {totalCount > 0 && (
-                              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#64748B' }}>
+                              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--bento-text-secondary, #64748B)' }}>
                                 {completedCount} / {totalCount} ({progressPct}%)
                               </span>
                             )}
@@ -1967,6 +2204,16 @@ export default function BentoView({ isPublic = false }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Visual Customization Rail (Right Edge, Vertically Centered Live Preview) */}
+      {!isPublicView && (
+        <DesignRail
+          customization={customization}
+          onUpdateCustomization={handleUpdateCustomization}
+          onResetToDefault={handleResetCustomization}
+          saveStatus={saveStatus}
+        />
       )}
 
       <Toast message={toastMsg} show={toastShow} />

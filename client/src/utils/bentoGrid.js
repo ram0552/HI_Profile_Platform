@@ -311,8 +311,8 @@ export const getActiveColumns = (containerWidth) => {
  * @param {number} columns
  * @returns {{ colWidth: number, rowHeight: number, gap: number }}
  */
-export const getGridDimensions = (containerWidth, columns = GRID_COLUMNS) => {
-  const gap = GRID_GAP;
+export const getGridDimensions = (containerWidth, columns = GRID_COLUMNS, customGap = null) => {
+  const gap = typeof customGap === 'number' ? customGap : GRID_GAP;
   const colWidth = containerWidth > 0 ? (containerWidth + gap) / columns : 240;
   const rowHeight = BASE_ROW_HEIGHT + gap;
   return { colWidth, rowHeight, gap };

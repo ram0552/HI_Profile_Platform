@@ -51,7 +51,7 @@ export default function SocialMetaRow({
               margin: 0,
               fontWeight: 800,
               fontSize: compact ? '0.85rem' : '0.98rem',
-              color: '#0F172A',
+              color: 'var(--bento-text-primary, #0F172A)',
               textOverflow: 'ellipsis',
               overflow: 'hidden',
               whiteSpace: 'nowrap',
@@ -76,12 +76,12 @@ export default function SocialMetaRow({
             </span>
           )}
         </div>
-        <span style={{ fontSize: compact ? '0.72rem' : '0.78rem', color: '#64748B', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', fontWeight: 500 }}>
+        <span style={{ fontSize: compact ? '0.72rem' : '0.78rem', color: 'var(--bento-text-secondary, #64748B)', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', fontWeight: 500 }}>
           @{cleanUsername}
         </span>
         {!compact && metaText && (
           <span
-            style={{ fontSize: '0.72rem', color: '#94A3B8', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', marginTop: 1, fontWeight: 500 }}
+            style={{ fontSize: '0.72rem', color: 'var(--bento-text-secondary, #94A3B8)', display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', marginTop: 1, fontWeight: 500 }}
             title={metaText}
           >
             {metaText}

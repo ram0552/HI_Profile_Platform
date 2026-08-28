@@ -16,4 +16,9 @@ router.get('/me', protect, profileController.getProfileMe);
 router.put('/me', protect, profileController.updateProfileMe);
 router.get('/user/:username', profileController.getPublicProfile);
 
+// Bento design customization routes
+router.get('/:username/customization', profileController.getCustomization);
+router.put('/:username/customization', protect, profileController.updateCustomization);
+router.patch('/:username/customization', protect, profileController.updateCustomization);
+
 module.exports = router;

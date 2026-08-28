@@ -546,6 +546,191 @@ const enhanceBio = async (req, res) => {
     }
 };
 
+const ALLOWED_CUSTOMIZATION_ENUMS = {
+    designStyle: ['classic', 'glass', 'brutalist', 'elevated', 'minimal', 'outline', 'softUI', 'retroTerminal', 'gradientMesh', 'editorial', 'duotone', 'frostedDark'],
+    colorTheme: ['default', 'sunset', 'rose', 'skyBreeze', 'sandNeutral', 'mintFresh', 'lavenderMist', 'peachCream', 'midnight', 'cyberpunk', 'emerald', 'royalPurple', 'obsidian', 'crimsonEmber', 'oceanDepth', 'graphiteSteel'],
+    typography: ['inter', 'outfit', 'jakarta', 'manrope', 'spaceGrotesk', 'playfair', 'lora', 'cormorant', 'robotoMono', 'jetbrainsMono', 'spaceMono', 'poppins', 'bricolage'],
+    borderRadius: ['sharp', 'subtle', 'small', 'medium', 'large', 'extraLarge', 'rounded', 'pill'],
+    shadow: ['none', 'whisper', 'soft', 'elevated', 'strong', 'neo3d', 'glow', 'offsetBrutalist'],
+    spacing: ['tight', 'compact', 'comfortable', 'relaxed', 'spacious', 'airy']
+};
+
+const DEFAULT_CUSTOMIZATION_DATA = {
+    designStyle: 'classic',
+    colorTheme: 'default',
+    typography: 'inter',
+    borderRadius: 'medium',
+    shadow: 'soft',
+    spacing: 'comfortable',
+    version: 1
+};
+
+/**
+ * GET /api/profiles/:username/customization (or /api/profile/:username/customization)
+ * Public endpoint to fetch Bento design customization for a profile
+ */
+const getCustomization = async (req, res) => {
+    try {
+        const rawUsername = req.params.username || '';
+        const username = rawUsername.toLowerCase().trim().replace(/^@/, '');
+
+        if (!username) {
+            return res.status(400).json({
+                success: false,
+                message: 'Username is required',
+                data: null
+            });
+        }
+
+        const profile = await Profile.findOne({ username });
+        if (!profile) {
+            return res.status(404).json({
+                success: false,
+                message: 'Profile not found',
+                data: null
+            });
+        }
+
+        const rawCust = profile.customization || {};
+        const customization = {
+            designStyle: rawCust.designStyle || DEFAULT_CUSTOMIZATION_DATA.designStyle,
+            colorTheme: rawCust.colorTheme || DEFAULT_CUSTOMIZATION_DATA.colorTheme,
+            typography: rawCust.typography || DEFAULT_CUSTOMIZATION_DATA.typography,
+            borderRadius: rawCust.borderRadius || DEFAULT_CUSTOMIZATION_DATA.borderRadius,
+            shadow: rawCust.shadow || DEFAULT_CUSTOMIZATION_DATA.shadow,
+            spacing: rawCust.spacing || DEFAULT_CUSTOMIZATION_DATA.spacing,
+            updatedAt: rawCust.updatedAt || profile.updatedAt || new Date().toISOString(),
+            version: rawCust.version || 1
+        };
+
+        return res.status(200).json({
+            success: true,
+            message: 'Customization retrieved successfully',
+            data: customization,
+            ...customization
+        });
+    } catch (error) {
+        console.error('[Get Customization Error]', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to retrieve profile customization',
+            data: null
+        });
+    }
+};
+
+/**
+ * PUT/PATCH /api/profiles/:username/customization (or /api/profile/:username/customization)
+ * Authenticated owner endpoint to partially or fully update Bento design customization
+ */
+const updateCustomization = async (req, res) => {
+    try {
+        const rawUsername = req.params.username || '';
+        const username = rawUsername.toLowerCase().trim().replace(/^@/, '');
+
+        if (!username) {
+            return res.status(400).json({
+                success: false,
+                message: 'Username is required',
+                data: null
+            });
+        }
+
+        // 1. Find the profile to be updated
+        const profile = await Profile.findOne({ username });
+        if (!profile) {
+            return res.status(404).json({
+                success: false,
+                message: 'Profile not found',
+                data: null
+            });
+        }
+
+        // 2. Enforce strict ownership check: profile owner must match authenticated user
+        const isOwner = (profile.userId && profile.userId.toString() === req.user._id.toString()) ||
+                        (req.user.username && req.user.username.toLowerCase() === username);
+
+        if (!isOwner) {
+            return res.status(403).json({
+                success: false,
+                message: 'Forbidden: You do not have permission to modify this profile customization',
+                data: null
+            });
+        }
+
+        // 3. Validate request body
+        const bodyKeys = Object.keys(req.body || {});
+        const allowedKeys = Object.keys(ALLOWED_CUSTOMIZATION_ENUMS);
+
+        // Disallow unknown keys
+        for (const key of bodyKeys) {
+            if (key === 'updatedAt' || key === 'version') {
+                return res.status(400).json({
+                    success: false,
+                    message: `'${key}' is server-controlled and cannot be supplied by the client`,
+                    data: null
+                });
+            }
+            if (!allowedKeys.includes(key)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Unknown field: '${key}'. Allowed fields are: ${allowedKeys.join(', ')}`,
+                    data: null
+                });
+            }
+        }
+
+        // Validate enum values for provided fields
+        for (const key of bodyKeys) {
+            const val = req.body[key];
+            if (val !== undefined) {
+                if (typeof val !== 'string' || !ALLOWED_CUSTOMIZATION_ENUMS[key].includes(val)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `Invalid value '${val}' for field '${key}'. Allowed values: ${ALLOWED_CUSTOMIZATION_ENUMS[key].join(', ')}`,
+                        data: null
+                    });
+                }
+            }
+        }
+
+        // 4. Merge partial or full updates into profile.customization
+        if (!profile.customization) {
+            profile.customization = { ...DEFAULT_CUSTOMIZATION_DATA };
+        }
+
+        allowedKeys.forEach(key => {
+            if (req.body[key] !== undefined) {
+                profile.customization[key] = req.body[key];
+            }
+        });
+
+        // Server-controlled timestamp & version
+        profile.customization.updatedAt = new Date();
+        profile.customization.version = 1;
+
+        // Mark modified to guarantee Mongoose persistence on nested subdocument
+        profile.markModified('customization');
+        await profile.save();
+
+        const savedCust = profile.customization.toObject ? profile.customization.toObject() : profile.customization;
+
+        return res.status(200).json({
+            success: true,
+            message: 'Customization updated successfully',
+            data: savedCust,
+            ...savedCust
+        });
+    } catch (error) {
+        console.error('[Update Customization Error]', error);
+        return res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to update customization',
+            data: null
+        });
+    }
+};
+
 module.exports = {
     uploadAvatar,
     updateBio,
@@ -554,5 +739,7 @@ module.exports = {
     getProfileMe,
     getPublicProfile,
     updateProfileMe,
-    enhanceBio
+    enhanceBio,
+    getCustomization,
+    updateCustomization
 };

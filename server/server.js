@@ -36,6 +36,8 @@ app.use('/api/v1/users', userRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/v1/profiles', profileRoutes);
+app.use('/api/profiles', profileRoutes);
 app.use('/api/v1/profile-blocks', blockRoutes);
 app.use('/api/profile-blocks', blockRoutes);
 app.use('/api/instagram', instagramRoutes);

@@ -13,9 +13,9 @@ export default function SocialFooterBar({ lastFetched = null, isFailedScrape = f
         justifySpace: 'between',
         marginTop: 6,
         paddingTop: 6,
-        borderTop: '1px solid #F1F5F9',
+        borderTop: '1px solid var(--bento-border-color, #F1F5F9)',
         fontSize: '0.72rem',
-        color: '#94A3B8',
+        color: 'var(--bento-text-secondary, #94A3B8)',
         flexShrink: 0
       }}
     >

@@ -133,7 +133,7 @@ export default function SocialWidgetLayout({
             style={{
               fontWeight: 800,
               fontSize: '0.8rem',
-              color: '#0F172A',
+              color: 'var(--bento-text-primary, #0F172A)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -146,7 +146,7 @@ export default function SocialWidgetLayout({
           <div
             style={{
               fontSize: '0.68rem',
-              color: '#64748B',
+              color: 'var(--bento-text-secondary, #64748B)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -166,7 +166,7 @@ export default function SocialWidgetLayout({
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
           style={{
-            background: '#F8FAFC',
+            background: 'var(--bento-accent-light, #F8FAFC)',
             border: `1px solid ${brandColor}35`,
             borderRadius: 8,
             padding: '3px 8px',
@@ -179,10 +179,10 @@ export default function SocialWidgetLayout({
             flexShrink: 0
           }}
         >
-          <span style={{ fontWeight: 800, fontSize: '0.74rem', color: '#0F172A' }}>
+          <span style={{ fontWeight: 800, fontSize: '0.74rem', color: 'var(--bento-text-primary, #0F172A)' }}>
             {formattedPrimaryVal}
           </span>
-          <span style={{ fontSize: '0.6rem', color: '#64748B', fontWeight: 700, textTransform: 'uppercase' }}>
+          <span style={{ fontSize: '0.6rem', color: 'var(--bento-text-secondary, #64748B)', fontWeight: 700, textTransform: 'uppercase' }}>
             {primaryStat.label}
           </span>
         </a>
@@ -248,10 +248,10 @@ export default function SocialWidgetLayout({
         <SocialAvatar src={profileImage} name={name} platform={platform} size={44} borderColor={brandColor} />
 
         <div style={{ width: '100%', overflow: 'hidden' }}>
-          <div style={{ fontWeight: 800, fontSize: '0.86rem', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
+          <div style={{ fontWeight: 800, fontSize: '0.86rem', color: 'var(--bento-text-primary, #0F172A)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
             {name}
           </div>
-          <div style={{ fontSize: '0.72rem', color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--bento-text-secondary, #64748B)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
             @{cleanUsername}
           </div>
         </div>
@@ -261,7 +261,7 @@ export default function SocialWidgetLayout({
         </div>
 
         {bio && (
-          <p style={{ margin: 0, fontSize: '0.74rem', color: '#475569', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+          <p style={{ margin: 0, fontSize: '0.74rem', color: 'var(--bento-text-secondary, #475569)', lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
             {bio}
           </p>
         )}
@@ -329,7 +329,7 @@ export default function SocialWidgetLayout({
             style={{
               margin: 0,
               fontSize: '0.82rem',
-              color: '#334155',
+              color: 'var(--bento-text-secondary, #334155)',
               lineHeight: '1.45',
               overflow: 'hidden',
               textOverflow: 'ellipsis',

@@ -4,14 +4,15 @@ import { LayoutDashboard } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import Toast, { useToast } from '../components/Toast'
 import { getSocialIcon, getSocialBrandColor } from '../components/SocialIcons'
-import { placeBlocks, resolveLayout, resolveDragReorder, collides, GRID_COLUMNS, getActiveColumns, getGridDimensions, calculateDragSnapWithHysteresis } from '../utils/bentoGrid'
+import { placeBlocks, resolveLayout, resolveDragReorder, collides, GRID_COLUMNS, getActiveColumns, getGridDimensions, calculateDragSnapWithHysteresis, getDefaultBlockSize, findFirstAvailablePosition } from '../utils/bentoGrid'
 import {
   getUserBlocks,
   getPublicProfileAndBlocks,
   createBlockApi,
   updateBlockApi,
   deleteBlockApi,
-  reorderBlocksApi
+  reorderBlocksApi,
+  refreshBentoProfileApi
 } from '../services/bentoApi'
 import {
   getProfileCustomizationApi,
@@ -24,6 +25,7 @@ import LinkedInWidget from '../components/social/LinkedInWidget'
 import YouTubeWidget from '../components/social/YouTubeWidget'
 import TwitterWidget from '../components/social/TwitterWidget'
 import DesignRail from '../components/customization/DesignRail'
+import InstantRefreshButton from '../components/bento/InstantRefreshButton'
 import {
   DEFAULT_CUSTOMIZATION,
   getCustomizationCssVariables,
@@ -142,6 +144,70 @@ export default function BentoView({ isPublic = false }) {
 
   // Social Cache State
   const [socialStats, setSocialStats] = useState({})
+
+  // Instant Refresh & Auto-Sync State
+  const [refreshLoading, setRefreshLoading] = useState(false)
+  const [remainingRefreshes, setRemainingRefreshes] = useState(10)
+  const [lastSyncedAt, setLastSyncedAt] = useState(null)
+
+  // Handle Instant Refresh (Max 10/day enforced by server)
+  const handleInstantRefresh = useCallback(async () => {
+    if (!accessToken || refreshLoading) return null;
+    setRefreshLoading(true);
+    try {
+      const response = await refreshBentoProfileApi(accessToken);
+      if (response && response.success && response.data) {
+        if (response.data.blocks && Array.isArray(response.data.blocks)) {
+          const rawBlocks = response.data.blocks.map(b => ({
+            ...b,
+            id: b._id || b.id,
+            w: b.layout?.w || 2,
+            h: b.layout?.h || 2,
+            x: b.layout?.x || 0,
+            y: b.layout?.y || 0
+          }));
+          setGridBlocks(placeBlocks(rawBlocks));
+        }
+
+        if (response.data.socialProfiles && Array.isArray(response.data.socialProfiles)) {
+          const statsMap = {};
+          response.data.socialProfiles.forEach(sp => {
+            if (sp.platform) {
+              statsMap[sp.platform] = sp;
+              if (sp.username) {
+                const h = sp.username.toLowerCase().trim().replace(/^@/, '');
+                statsMap[`${sp.platform}:${h}`] = sp;
+              }
+            }
+          });
+          setSocialStats(prev => ({ ...prev, ...statsMap }));
+        }
+
+        if (response.meta) {
+          if (response.meta.remainingRefreshes !== undefined) {
+            setRemainingRefreshes(response.meta.remainingRefreshes);
+          }
+          if (response.meta.lastSyncedAt) {
+            setLastSyncedAt(response.meta.lastSyncedAt);
+          }
+        }
+        toast('Bento profile data synchronized!');
+        return response;
+      } else {
+        if (response?.meta?.remainingRefreshes !== undefined) {
+          setRemainingRefreshes(response.meta.remainingRefreshes);
+        }
+        toast(response?.message || 'Refresh limit reached or request failed', 'error');
+        return response;
+      }
+    } catch (err) {
+      console.error('[Instant Refresh Error]', err);
+      toast('Refresh failed. Your previous profile data is preserved.', 'error');
+      throw err;
+    } finally {
+      setRefreshLoading(false);
+    }
+  }, [accessToken, refreshLoading, toast]);
 
   // Customization State & Database Persistence
   const [customization, setCustomization] = useState(() => {
@@ -452,6 +518,14 @@ export default function BentoView({ isPublic = false }) {
 
         if (blocksData && blocksData.success) {
           hasLoadedDataRef.current = true;
+          if (blocksData.meta) {
+            if (blocksData.meta.remainingRefreshes !== undefined) {
+              setRemainingRefreshes(blocksData.meta.remainingRefreshes);
+            }
+            if (blocksData.meta.lastSyncedAt) {
+              setLastSyncedAt(blocksData.meta.lastSyncedAt);
+            }
+          }
           const rawBlocks = (blocksData.data || []).map(b => ({
             ...b,
             id: b._id,
@@ -544,31 +618,37 @@ export default function BentoView({ isPublic = false }) {
   const handleDuplicateBlock = async (block) => {
     if (isPublicView) return;
     const defaultSize = getDefaultBlockSize(block.blockType);
+    const targetW = block.w || defaultSize.w;
+    const targetH = block.h || defaultSize.h;
+    const targetPos = findFirstAvailablePosition(gridBlocks, targetW, targetH);
+    const newBlockLayout = { x: targetPos.x, y: targetPos.y, w: targetW, h: targetH };
+
     const newBlockData = {
       blockType: block.blockType,
       configuration: { ...block.configuration },
-      layout: { w: block.w || defaultSize.w, h: block.h || defaultSize.h },
+      layout: newBlockLayout,
       order: gridBlocks.length
     };
 
-    if (accessToken) {
+    const activeToken = accessToken || localStorage.getItem('accessToken');
+    if (activeToken) {
       try {
-        const res = await createBlockApi(newBlockData, accessToken);
-        if (res.success && res.block) {
+        const res = await createBlockApi(newBlockData, activeToken);
+        const createdData = res.data || res.block;
+        if (res.success && createdData) {
           const newBlock = {
-            id: res.block._id,
-            _id: res.block._id,
-            blockType: res.block.blockType,
-            configuration: res.block.configuration,
-            socialProfile: res.block.socialProfile,
-            x: res.block.layout?.x,
-            y: res.block.layout?.y,
-            w: res.block.layout?.w || defaultSize.w,
-            h: res.block.layout?.h || defaultSize.h,
-            layout: res.block.layout
+            id: createdData._id,
+            _id: createdData._id,
+            blockType: createdData.blockType,
+            configuration: createdData.configuration,
+            socialProfile: createdData.socialProfile,
+            x: createdData.layout?.x !== undefined ? createdData.layout.x : targetPos.x,
+            y: createdData.layout?.y !== undefined ? createdData.layout.y : targetPos.y,
+            w: createdData.layout?.w || targetW,
+            h: createdData.layout?.h || targetH,
+            layout: createdData.layout || newBlockLayout
           };
-          const placed = placeBlocks([...gridBlocks, newBlock]);
-          setGridBlocks(placed);
+          setGridBlocks(prev => [...prev, newBlock]);
           setSelectedBlockId(newBlock.id);
           toast(`Duplicated ${block.blockType} block!`);
         }
@@ -1251,33 +1331,49 @@ export default function BentoView({ isPublic = false }) {
         toast('Network error updating block');
       }
     } else {
-      // Optimistic Create
+      // Optimistic Create in First Available Empty Space
+      const targetPos = findFirstAvailablePosition(gridBlocks, layoutObj.w, layoutObj.h);
+      const fullLayout = {
+        x: targetPos.x,
+        y: targetPos.y,
+        w: layoutObj.w,
+        h: layoutObj.h
+      };
+
       const tempId = `temp-${Date.now()}`;
-      const tempBlock = placeBlocks([...gridBlocks, {
+      const tempBlock = {
         id: tempId,
+        _id: tempId,
         blockType: activeDialog,
         configuration: configObj,
-        layout: layoutObj
-      }]).pop();
+        x: targetPos.x,
+        y: targetPos.y,
+        w: layoutObj.w,
+        h: layoutObj.h,
+        layout: fullLayout
+      };
 
       setGridBlocks(prev => [...prev, tempBlock]);
       closeDialog();
 
       try {
+        const activeToken = accessToken || localStorage.getItem('accessToken');
         const data = await createBlockApi({
           blockType: activeDialog,
           configuration: configObj,
-          layout: layoutObj
-        }, accessToken);
+          layout: fullLayout
+        }, activeToken);
 
-        if (data.success && data.data) {
+        const createdData = data.data || data.block;
+        if (data.success && createdData) {
           const savedBlock = {
-            ...data.data,
-            id: data.data._id,
-            x: data.data.layout?.x || 0,
-            y: data.data.layout?.y || 0,
-            w: data.data.layout?.w || 2,
-            h: data.data.layout?.h || 2
+            ...createdData,
+            id: createdData._id,
+            x: createdData.layout?.x !== undefined ? createdData.layout.x : targetPos.x,
+            y: createdData.layout?.y !== undefined ? createdData.layout.y : targetPos.y,
+            w: createdData.layout?.w || layoutObj.w,
+            h: createdData.layout?.h || layoutObj.h,
+            layout: createdData.layout || fullLayout
           };
           setGridBlocks(prev => prev.map(b => b.id === tempId ? savedBlock : b));
           toast('Block created!');
@@ -1344,11 +1440,12 @@ export default function BentoView({ isPublic = false }) {
     setGridBlocks(prev => prev.map(b => b.id === block.id ? updatedBlock : b));
 
     // 2. Async persistence to MongoDB
-    if (accessToken) {
+    const activeToken = accessToken || localStorage.getItem('accessToken');
+    if (activeToken) {
       try {
-        const res = await updateBlockApi(block.id, { configuration: { ...block.configuration, items: updatedItems } }, accessToken);
+        const res = await updateBlockApi(block.id, { configuration: { ...block.configuration, items: updatedItems } }, activeToken);
         if (res && res.success === false) {
-          console.error('[Checklist Update Failed] Reverting state');
+          console.error('[Checklist Update Failed] Reverting state', res);
           setGridBlocks(previousBlocks);
           toast(res.message || 'Failed to save checklist state');
         }
@@ -1490,6 +1587,19 @@ export default function BentoView({ isPublic = false }) {
 
       {/* Main Profile Container */}
       <main style={{ maxWidth: 1080, width: '100%', margin: '40px auto 0', padding: '0 24px', flexGrow: 1, boxSizing: 'border-box' }}>
+
+        {/* UPPER-LEFT SIDE OF THE BENTO CONTENT AREA — Instant Refresh Button */}
+        {!isPublicView && (
+          <div style={{ display: 'flex', justifyContent: 'flex-start', width: '100%', marginBottom: 12 }}>
+            <InstantRefreshButton
+              onRefresh={handleInstantRefresh}
+              loading={refreshLoading}
+              remainingRefreshes={remainingRefreshes}
+              lastSyncedAt={lastSyncedAt}
+              designStyle={customization.designStyle}
+            />
+          </div>
+        )}
 
         {/* Profile Card Header — Centered Hero Layout */}
         <section
@@ -1841,8 +1951,6 @@ export default function BentoView({ isPublic = false }) {
                     return (
                       <div
                         style={{ display: 'flex', flexDirection: 'column', height: '100%', justifyContent: 'space-between' }}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => e.stopPropagation()}
                       >
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                           {/* Title & Stats */}
@@ -1879,7 +1987,6 @@ export default function BentoView({ isPublic = false }) {
                               <label
                                 key={itemId}
                                 className="bento-checklist-item"
-                                onPointerDown={(e) => e.stopPropagation()}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (!isPublicView) {
@@ -1922,7 +2029,7 @@ export default function BentoView({ isPublic = false }) {
                   {(() => {
                     const handle = block.configuration?.handle || block.configuration?.username || block.configuration?.title || '';
                     const cacheKey = `${block.blockType}:${handle.toLowerCase().trim().replace(/^@/, '')}`;
-                    const effectiveSocialProfile = block.socialProfile || socialStats[cacheKey] || {};
+                    const effectiveSocialProfile = block.socialProfile || socialStats[cacheKey] || socialStats[block.blockType] || {};
 
                     if (block.blockType === 'linkedin') {
                       console.log('[LINKEDIN BENTOVIEW DATA]', {

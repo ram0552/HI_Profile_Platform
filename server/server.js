@@ -47,10 +47,14 @@ app.get('/', (req, res) => {
     res.send('Hi-Profile API is running...');
 });
 
+const { initBentoCronJob } = require('./services/cronService');
+
 // Connect to DB and start server
 connectDB().then(() => {
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
+        // Initialize Daily 2 AM Bento Auto-Sync Cron Scheduler
+        initBentoCronJob();
     });
 }).catch((error) => {
     console.error('\n[Startup] MongoDB connection failed. Express server was NOT started.');

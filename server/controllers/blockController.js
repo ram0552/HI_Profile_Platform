@@ -3,7 +3,8 @@ const Profile = require('../models/Profile');
 const User = require('../models/User');
 const SocialProfile = require('../models/SocialProfile');
 const { getOrFetchSocialProfile, deleteSocialProfileByBlockId } = require('../services/socialProfileService');
-const { syncSetupSocialLinksToBento } = require('../services/bentoSyncService');
+const { syncSetupSocialLinksToBento, syncUserBentoData } = require('../services/bentoSyncService');
+const { getTodayDateStringInTimezone } = require('../services/cronService');
 
 const MAX_BLOCKS_PER_PROFILE = 20;
 const VALID_BLOCK_TYPES = [
@@ -148,13 +149,49 @@ const createBlock = async (req, res) => {
             };
         }
 
+        let targetX = layout.x !== undefined && layout.x !== null ? Number(layout.x) : null;
+        let targetY = layout.y !== undefined && layout.y !== null ? Number(layout.y) : null;
+
+        if (targetX === null || targetY === null || isNaN(targetX) || isNaN(targetY)) {
+            const existingUserBlocks = await ProfileBlock.find({ userId: req.user._id }).select('layout');
+            const placed = existingUserBlocks.map(b => ({
+                x: b.layout?.x || 0,
+                y: b.layout?.y || 0,
+                w: b.layout?.w || 2,
+                h: b.layout?.h || 1
+            }));
+
+            const maxY = placed.reduce((max, b) => Math.max(max, b.y + b.h), 0);
+            let foundPos = null;
+
+            for (let testY = 0; testY <= maxY + 1; testY++) {
+                for (let testX = 0; testX <= 4 - Math.min(4, Math.max(1, w)); testX++) {
+                    const candidate = { x: testX, y: testY, w: Math.min(4, Math.max(1, w)), h: Math.max(1, h) };
+                    const collides = placed.some(p => (
+                        candidate.x < p.x + p.w &&
+                        candidate.x + candidate.w > p.x &&
+                        candidate.y < p.y + p.h &&
+                        candidate.y + candidate.h > p.y
+                    ));
+                    if (!collides) {
+                        foundPos = { x: testX, y: testY };
+                        break;
+                    }
+                }
+                if (foundPos) break;
+            }
+
+            targetX = foundPos ? foundPos.x : 0;
+            targetY = foundPos ? foundPos.y : maxY;
+        }
+
         const block = await ProfileBlock.create({
             userId: req.user._id,
             blockType,
             configuration: finalConfig,
             layout: {
-                x: Number(layout.x) || 0,
-                y: Number(layout.y) || 0,
+                x: Math.max(0, targetX),
+                y: Math.max(0, targetY),
                 w: Math.max(1, Math.min(4, w)),
                 h: Math.max(1, Math.min(6, h))
             },
@@ -171,7 +208,7 @@ const createBlock = async (req, res) => {
                     profileBlockId: block._id,
                     platform: blockType,
                     username: finalConfig.username,
-                    forceRefresh: true
+                    forceRefresh: false
                 });
             } catch (err) {
                 console.error(`[Create Block Social Sync Error] ${blockType}:${finalConfig.username}:`, err.message);
@@ -285,11 +322,29 @@ const getUserBlocks = async (req, res) => {
             return bObj;
         });
 
+        // Compute remaining instant refreshes for today (Asia/Kolkata)
+        const timezone = process.env.CRON_TIMEZONE || 'Asia/Kolkata';
+        const todayStr = getTodayDateStringInTimezone(timezone);
+        const userDoc = await User.findById(req.user._id).lean();
+        const lastResetDate = userDoc?.instantRefresh?.lastResetDate || '';
+        const rawCount = userDoc?.instantRefresh?.count || 0;
+        const usedCount = lastResetDate === todayStr ? rawCount : 0;
+        const remainingRefreshes = Math.max(0, 10 - usedCount);
+
+        const profileDoc = await Profile.findOne({ userId: req.user._id }).lean();
+
         return res.status(200).json({
             success: true,
             message: 'User blocks retrieved successfully',
             data: blocksWithSocial,
-            socialProfiles
+            socialProfiles,
+            meta: {
+                remainingRefreshes,
+                usedRefreshes: usedCount,
+                maxAllowed: 10,
+                lastSyncedAt: profileDoc?.syncMetadata?.lastSyncedAt || null,
+                syncStatus: profileDoc?.syncMetadata?.syncStatus || 'idle'
+            }
         });
     } catch (error) {
         console.error('[Get User Blocks Error]', error);
@@ -475,7 +530,7 @@ const updateBlock = async (req, res) => {
                             profileBlockId: block._id,
                             platform: block.blockType,
                             username: newHandle,
-                            forceRefresh: true
+                            forceRefresh: false
                         });
                     } catch (err) {
                         console.error(`[Update Block Social Sync Error] ${block.blockType}:${newHandle}:`, err.message);
@@ -631,11 +686,201 @@ const reorderBlocks = async (req, res) => {
     }
 };
 
+/**
+ * POST /api/profile-blocks/refresh
+ * Instant Refresh endpoint for authenticated user.
+ * Strictly enforces server-side rate limit of 2 refreshes per day (Asia/Kolkata timezone).
+ * Atomic MongoDB update protects against concurrent requests / double clicks.
+ */
+const refreshUserBentoData = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const timezone = process.env.CRON_TIMEZONE || 'Asia/Kolkata';
+        const todayStr = getTodayDateStringInTimezone(timezone);
+
+        // Fetch current user document
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'User authentication required'
+            });
+        }
+
+        const lastResetDate = user.instantRefresh?.lastResetDate || '';
+        let currentCount = user.instantRefresh?.count || 0;
+
+        if (lastResetDate !== todayStr) {
+            currentCount = 0;
+        }
+
+        // Maximum 10 instant refreshes per user per day enforced on SERVER
+        if (currentCount >= 10) {
+            return res.status(429).json({
+                success: false,
+                code: 'LIMIT_EXCEEDED',
+                message: 'Daily instant refresh limit reached. Maximum 10 refreshes allowed per day.',
+                meta: {
+                    remainingRefreshes: 0,
+                    usedRefreshes: 10,
+                    maxAllowed: 10,
+                    timezone,
+                    lastResetDate: todayStr
+                }
+            });
+        }
+
+        // REQUIREMENT 20: Atomic MongoDB update protects against concurrent requests / rapid double-clicks
+        const updatedUser = await User.findOneAndUpdate(
+            {
+                _id: userId,
+                $or: [
+                    { 'instantRefresh.lastResetDate': { $ne: todayStr } },
+                    { 'instantRefresh.count': { $lt: 10 } }
+                ]
+            },
+            {
+                $set: {
+                    'instantRefresh.lastResetDate': todayStr,
+                    'instantRefresh.count': lastResetDate !== todayStr ? 1 : currentCount + 1
+                }
+            },
+            { new: true }
+        );
+
+        if (!updatedUser) {
+            // Race condition caught: another concurrent request bumped count to 10
+            return res.status(429).json({
+                success: false,
+                code: 'LIMIT_EXCEEDED',
+                message: 'Daily instant refresh limit reached. Maximum 10 refreshes allowed per day.',
+                meta: {
+                    remainingRefreshes: 0,
+                    usedRefreshes: 10,
+                    maxAllowed: 10,
+                    timezone
+                }
+            });
+        }
+
+        const remainingRefreshes = Math.max(0, 10 - updatedUser.instantRefresh.count);
+
+        console.log(`[Instant Refresh Endpoint] Accepted for user ${userId} (${updatedUser.instantRefresh.count}/10 used today).`);
+
+        // Execute central synchronization service
+        let syncResult;
+        try {
+            console.log(`[Instant Refresh Endpoint] Initiating Apify sync for user ${userId}... (APIFY_API_KEY configured: ${Boolean(process.env.APIFY_API_KEY)})`);
+            syncResult = await syncUserBentoData(userId, {
+                forceRefresh: true,
+                syncSource: 'manual'
+            });
+        } catch (syncErr) {
+            console.error(`[Instant Refresh Error Diagnostic] User ${userId}:`, {
+                operation: 'refreshUserBentoData',
+                userId: String(userId),
+                apifyKeyConfigured: Boolean(process.env.APIFY_API_KEY),
+                errorName: syncErr.name,
+                errorMessage: syncErr.message,
+                stack: syncErr.stack
+            });
+
+            // Respond with 502 Upstream failure while preserving user's existing MongoDB profile data
+            const existingBlocks = await ProfileBlock.find({ userId }).sort({ order: 1, createdAt: 1 }).lean();
+            const existingSocial = await SocialProfile.find({ userId }).lean();
+
+            return res.status(502).json({
+                success: false,
+                message: `Refresh failed: ${syncErr.message}. Your previous data is still available.`,
+                data: {
+                    blocks: existingBlocks,
+                    socialProfiles: existingSocial
+                },
+                meta: {
+                    lastSyncedAt: new Date(),
+                    remainingRefreshes,
+                    usedRefreshes: updatedUser.instantRefresh.count
+                }
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: 'Bento profile data synchronized successfully',
+            data: {
+                blocks: syncResult.blocks,
+                socialProfiles: syncResult.socialProfiles
+            },
+            meta: {
+                lastSyncedAt: syncResult.lastSyncedAt,
+                remainingRefreshes,
+                usedRefreshes: updatedUser.instantRefresh.count,
+                syncStatus: syncResult.syncStatus
+            }
+        });
+    } catch (error) {
+        console.error('[Instant Refresh Endpoint Error]', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to perform instant refresh',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * GET /api/profile-blocks/refresh-status
+ * Check remaining instant refresh count for authenticated user
+ */
+const getRefreshStatus = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const timezone = process.env.CRON_TIMEZONE || 'Asia/Kolkata';
+        const todayStr = getTodayDateStringInTimezone(timezone);
+
+        const [user, profile] = await Promise.all([
+            User.findById(userId).lean(),
+            Profile.findOne({ userId }).lean()
+        ]);
+
+        if (!user) {
+            return res.status(401).json({ success: false, message: 'User authentication required' });
+        }
+
+        const lastResetDate = user.instantRefresh?.lastResetDate || '';
+        const rawCount = user.instantRefresh?.count || 0;
+        const usedCount = lastResetDate === todayStr ? rawCount : 0;
+        const remainingRefreshes = Math.max(0, 10 - usedCount);
+
+        return res.status(200).json({
+            success: true,
+            meta: {
+                remainingRefreshes,
+                usedRefreshes: usedCount,
+                maxAllowed: 10,
+                lastSyncedAt: profile?.syncMetadata?.lastSyncedAt || null,
+                syncStatus: profile?.syncMetadata?.syncStatus || 'idle',
+                timezone
+            }
+        });
+    } catch (error) {
+        console.error('[Get Refresh Status Error]', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to get refresh status',
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     createBlock,
     getUserBlocks,
     getPublicBlocks,
     updateBlock,
     deleteBlock,
-    reorderBlocks
+    reorderBlocks,
+    refreshUserBentoData,
+    getRefreshStatus
 };
+

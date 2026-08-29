@@ -4,7 +4,11 @@ const profileController = require('../controllers/profileController');
 const { protect } = require('../middleware/authMiddleware');
 const { bioEnhanceLimiter } = require('../middleware/rateLimiter');
 
+const blockController = require('../controllers/blockController');
+
 // Protected onboarding routes (updating profile & onboarding state)
+router.post('/refresh', protect, blockController.refreshUserBentoData);
+router.get('/refresh-status', protect, blockController.getRefreshStatus);
 router.post('/upload', protect, profileController.uploadAvatar);
 router.post('/bio', protect, profileController.updateBio);
 router.post('/bio/enhance', protect, bioEnhanceLimiter, profileController.enhanceBio);

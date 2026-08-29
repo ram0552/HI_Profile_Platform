@@ -8,6 +8,8 @@ router.get('/public/:username', blockController.getPublicBlocks);
 
 // Protected routes (Owner management only)
 router.use(protect);
+router.post('/refresh', blockController.refreshUserBentoData);
+router.get('/refresh-status', blockController.getRefreshStatus);
 router.post('/', blockController.createBlock);
 router.get('/', blockController.getUserBlocks);
 router.patch('/reorder', blockController.reorderBlocks);

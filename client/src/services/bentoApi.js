@@ -1,15 +1,12 @@
+import { fetchWithAuth } from './apiClient';
+
 const API_BASE_URL = 'http://localhost:3001/api';
 
 /**
  * Fetch blocks for authenticated user
  */
 export const getUserBlocks = async (accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/profile-blocks`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
-  return response.json();
+  return fetchWithAuth('/profile-blocks', { method: 'GET' }, accessToken);
 };
 
 /**
@@ -24,56 +21,53 @@ export const getPublicProfileAndBlocks = async (username) => {
  * Create a new ProfileBlock
  */
 export const createBlockApi = async (blockData, accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/profile-blocks`, {
+  return fetchWithAuth('/profile-blocks', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
     body: JSON.stringify(blockData)
-  });
-  return response.json();
+  }, accessToken);
 };
 
 /**
  * Update configuration, layout, or visibility of a ProfileBlock
  */
 export const updateBlockApi = async (id, updateData, accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/profile-blocks/${id}`, {
+  return fetchWithAuth(`/profile-blocks/${id}`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
     body: JSON.stringify(updateData)
-  });
-  return response.json();
+  }, accessToken);
 };
 
 /**
  * Delete a ProfileBlock by ID
  */
 export const deleteBlockApi = async (id, accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/profile-blocks/${id}`, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
-  return response.json();
+  return fetchWithAuth(`/profile-blocks/${id}`, {
+    method: 'DELETE'
+  }, accessToken);
 };
 
 /**
  * Bulk reorder/update layout for user blocks
  */
 export const reorderBlocksApi = async (blocks, accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/profile-blocks/reorder`, {
+  return fetchWithAuth('/profile-blocks/reorder', {
     method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
     body: JSON.stringify({ blocks })
-  });
-  return response.json();
+  }, accessToken);
+};
+
+/**
+ * Trigger Instant Refresh for authenticated user (Max 2/day)
+ */
+export const refreshBentoProfileApi = async (accessToken) => {
+  return fetchWithAuth('/profile-blocks/refresh', {
+    method: 'POST'
+  }, accessToken);
+};
+
+/**
+ * Fetch current refresh status & remaining count for authenticated user
+ */
+export const getRefreshStatusApi = async (accessToken) => {
+  return fetchWithAuth('/profile-blocks/refresh-status', { method: 'GET' }, accessToken);
 };

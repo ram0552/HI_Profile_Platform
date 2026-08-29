@@ -14,7 +14,7 @@ const {
     sendVerificationEmail,
     sendPasswordResetOtpEmail,
     sendPasswordChangedEmail,
-    sendAccountLockedEmail
+    sendAccountLockedEmail  
 } = require('../services/emailService');
 
 // Helper: Hash token/OTP using SHA256

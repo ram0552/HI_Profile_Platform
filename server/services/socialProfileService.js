@@ -311,14 +311,23 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
     let isApifySuccess = false;
 
     try {
+        console.log(`[SocialProfile] Invoking platform service for ${cleanPlatform}:${cleanUsername} (APIFY_API_KEY configured: ${Boolean(process.env.APIFY_API_KEY)})...`);
         data = await fetchPlatformData(cleanPlatform, cleanUsername);
         isApifySuccess = true;
     } catch (apifyErr) {
-        console.warn(`[SocialProfile] Apify fetch warning for ${cleanPlatform}:${cleanUsername} (${apifyErr.message}).`);
+        console.error(`[SocialProfile Apify Error] ${cleanPlatform}:${cleanUsername}:`, {
+            platform: cleanPlatform,
+            username: cleanUsername,
+            apifyKeyConfigured: Boolean(process.env.APIFY_API_KEY),
+            errorMessage: apifyErr.message
+        });
+
         if (socialProfile && isPopulated) {
             console.log(`[SocialProfile] Serving existing MongoDB profile for ${cleanPlatform}:${cleanUsername} despite Apify fetch error.`);
             return socialProfile;
         }
+
+        throw new Error(`Apify synchronization failed for ${cleanPlatform}:${cleanUsername} (${apifyErr.message})`);
     }
 
     const profileObj = data.profile || data;
@@ -344,7 +353,6 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
         platform: cleanPlatform,
         username: cleanUsername,
         displayName: isApifySuccess ? (data.displayName || profileObj.fullName || data.fullName || data.name || cleanUsername) : (socialProfile?.displayName || cleanUsername),
-        // Never overwrite a valid existing profile image with an empty string
         profileImage: extractedProfileImage || socialProfile?.profileImage || '',
         headline: isApifySuccess ? (profileObj.headline || data.headline || '') : (socialProfile?.headline || ''),
         location: isApifySuccess ? (profileObj.location || data.location || '') : (socialProfile?.location || ''),
@@ -362,9 +370,15 @@ const getOrFetchSocialProfile = async ({ userId, profileBlockId, platform, usern
     };
 
     if (socialProfile) {
+        if (userId && !socialProfile.userId) socialProfile.userId = userId;
+        if (profileBlockId && !socialProfile.profileBlockId) socialProfile.profileBlockId = profileBlockId;
         Object.assign(socialProfile, payload);
         await socialProfile.save();
     } else {
+        if (!userId || !profileBlockId) {
+            console.warn(`[SocialProfile Warning] Cannot create SocialProfile document without userId and profileBlockId. userId=${userId}, profileBlockId=${profileBlockId}`);
+            return null;
+        }
         socialProfile = await SocialProfile.findOneAndUpdate(
             { profileBlockId },
             { $set: payload },

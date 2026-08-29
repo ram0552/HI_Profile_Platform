@@ -1,60 +1,42 @@
+import { fetchWithAuth } from './apiClient';
+
 const API_BASE_URL = 'http://localhost:3001/api';
 
 /**
  * Fetch current user profile and user details
  */
 export const getProfileMeApi = async (accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/profile/me`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
-  return response.json();
+  return fetchWithAuth('/profile/me', { method: 'GET' }, accessToken);
 };
 
 /**
  * Update current user profile details
  */
 export const updateProfileMeApi = async (profileData, accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/profile/me`, {
+  return fetchWithAuth('/profile/me', {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
     body: JSON.stringify(profileData)
-  });
-  return response.json();
+  }, accessToken);
 };
 
 /**
  * Change current user password securely
  */
 export const changePasswordApi = async ({ currentPassword, newPassword }, accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/auth/change-password`, {
+  return fetchWithAuth('/auth/change-password', {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
     body: JSON.stringify({ currentPassword, newPassword })
-  });
-  return response.json();
+  }, accessToken);
 };
 
 /**
  * Enhance bio using Gemini AI
  */
 export const enhanceBioApi = async (bio, accessToken) => {
-  const response = await fetch(`${API_BASE_URL}/profile/bio/enhance`, {
+  return fetchWithAuth('/profile/bio/enhance', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
     body: JSON.stringify({ bio })
-  });
-  return response.json();
+  }, accessToken);
 };
 
 /**
@@ -71,14 +53,8 @@ export const getProfileCustomizationApi = async (username) => {
  */
 export const updateProfileCustomizationApi = async (username, customizationData, accessToken) => {
   const cleanUsername = (username || '').toLowerCase().trim().replace(/^@/, '');
-  const response = await fetch(`${API_BASE_URL}/profiles/${cleanUsername}/customization`, {
+  return fetchWithAuth(`/profiles/${cleanUsername}/customization`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`
-    },
     body: JSON.stringify(customizationData)
-  });
-  return response.json();
+  }, accessToken);
 };
-

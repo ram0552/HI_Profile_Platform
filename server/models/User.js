@@ -157,6 +157,17 @@ const userSchema = new mongoose.Schema({
     preferences: {
         type: Object,
         default: {}
+    },
+    instantRefresh: {
+        count: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+        lastResetDate: {
+            type: String,
+            default: ''
+        }
     }
 }, {
     timestamps: true

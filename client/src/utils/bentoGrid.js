@@ -372,6 +372,39 @@ export const calculateDragSnapWithHysteresis = (
 };
 
 /**
+ * Find the first available position (x, y) in the grid for a block of size (w, h)
+ * without overlapping or moving any existing placed blocks.
+ * 
+ * @param {Array} existingBlocks - List of already placed blocks in the grid
+ * @param {number} w - Block width
+ * @param {number} h - Block height
+ * @param {number} maxColumns - Grid column count (default 4)
+ * @returns {{x: number, y: number}} The first available (x, y) position
+ */
+export const findFirstAvailablePosition = (existingBlocks = [], w = 2, h = 1, maxColumns = GRID_COLUMNS) => {
+  const targetW = Math.max(1, Math.min(maxColumns, w));
+  const targetH = Math.max(1, h);
+
+  if (!existingBlocks || existingBlocks.length === 0) {
+    return { x: 0, y: 0 };
+  }
+
+  const maxY = existingBlocks.reduce((max, b) => Math.max(max, (b.y || 0) + (b.h || 1)), 0);
+
+  for (let y = 0; y <= maxY + 1; y++) {
+    for (let x = 0; x <= maxColumns - targetW; x++) {
+      const candidate = { x, y, w: targetW, h: targetH };
+      const hasCollision = existingBlocks.some(p => collides(p, candidate));
+      if (!hasCollision) {
+        return { x, y };
+      }
+    }
+  }
+
+  return { x: 0, y: maxY };
+};
+
+/**
  * Automatically position blocks into a grid layout
  * @param {Array} blocks 
  * @returns {Array} Positioned blocks
@@ -384,30 +417,20 @@ export const placeBlocks = (blocks) => {
 
     let w = block.layout?.w !== undefined ? block.layout.w : (block.w !== undefined ? block.w : defaultSize.w);
     let h = block.layout?.h !== undefined ? block.layout.h : (block.h !== undefined ? block.h : defaultSize.h);
-    let x = block.layout?.x !== undefined ? block.layout.x : (block.x !== undefined ? block.x : 0);
-    let y = block.layout?.y !== undefined ? block.layout.y : (block.y !== undefined ? block.y : 0);
 
     w = Math.max(1, Math.min(GRID_COLUMNS, w));
     h = Math.max(1, h);
 
-    const isUnplaced = block.x === undefined && (!block.layout || block.layout.x === undefined);
+    const hasExplicitPosition = (block.x !== undefined && block.y !== undefined) ||
+      (block.layout?.x !== undefined && block.layout?.y !== undefined);
 
-    if (isUnplaced) {
-      x = 0;
-      y = 0;
-      let target = { id: block.id || block._id, x, y, w, h };
-      while (true) {
-        target.x = x;
-        target.y = y;
-        if (x + w <= GRID_COLUMNS && !placed.some(p => collides(p, target))) {
-          break;
-        }
-        x += 1;
-        if (x >= GRID_COLUMNS) {
-          x = 0;
-          y += 1;
-        }
-      }
+    let x = block.layout?.x !== undefined ? block.layout.x : (block.x !== undefined ? block.x : 0);
+    let y = block.layout?.y !== undefined ? block.layout.y : (block.y !== undefined ? block.y : 0);
+
+    if (!hasExplicitPosition) {
+      const pos = findFirstAvailablePosition(placed, w, h, GRID_COLUMNS);
+      x = pos.x;
+      y = pos.y;
     }
 
     placed.push({

@@ -207,7 +207,13 @@ const profileSchema = new mongoose.Schema({
         title: { type: String, trim: true },
         fileUrl: { type: String, trim: true },
         updatedAt: { type: Date, default: Date.now }
-    }]
+    }],
+    syncMetadata: {
+        lastSyncedAt: { type: Date, default: null },
+        syncStatus: { type: String, enum: ['idle', 'in_progress', 'success', 'failed'], default: 'idle' },
+        syncSource: { type: String, enum: ['cron', 'manual', 'setup', 'system'], default: 'system' },
+        syncError: { type: String, default: '' }
+    }
 }, {
     timestamps: true
 });

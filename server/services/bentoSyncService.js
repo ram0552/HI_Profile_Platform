@@ -1,5 +1,6 @@
 const Profile = require('../models/Profile');
 const ProfileBlock = require('../models/ProfileBlock');
+const SocialProfile = require('../models/SocialProfile');
 const { getOrFetchSocialProfile } = require('./socialProfileService');
 
 const SUPPORTED_SOCIAL_PLATFORMS = ['linkedin', 'instagram', 'github', 'youtube', 'twitter', 'dribbble'];
@@ -240,8 +241,196 @@ const syncSetupSocialLinksToBento = async (userId) => {
     }
 };
 
+/**
+ * Common synchronization service for Bento profile data.
+ * Used by both Daily 2 AM Cron Job and Instant Refresh manual endpoint.
+ * 
+ * @param {string|ObjectId} userId - User ID to synchronize
+ * @param {Object} options - { forceRefresh: boolean, syncSource: 'cron'|'manual'|'setup' }
+ * @returns {Promise<Object>} { success: boolean, blocks: Array, socialProfiles: Array, lastSyncedAt: Date }
+ */
+const syncUserBentoData = async (userId, options = {}) => {
+    if (!userId) {
+        throw new Error('userId is required for syncUserBentoData');
+    }
+
+    const syncSource = options.syncSource || 'manual';
+    const forceRefresh = options.forceRefresh !== false;
+
+    console.log(`[Bento Sync Service] Starting sync for user "${userId}" (Source: ${syncSource}, ForceRefresh: ${forceRefresh})`);
+
+    // 1. Update Profile syncStatus to 'in_progress'
+    await Profile.updateOne(
+        { userId },
+        {
+            $set: {
+                'syncMetadata.syncStatus': 'in_progress',
+                'syncMetadata.syncSource': syncSource
+            }
+        }
+    );
+
+    try {
+        // 2. Ensure setup social links are synced into Bento blocks first
+        await syncSetupSocialLinksToBento(userId);
+
+        // 3. Find all Bento social blocks for this user
+        const socialBlocks = await ProfileBlock.find({
+            userId,
+            blockType: { $in: SUPPORTED_SOCIAL_PLATFORMS }
+        });
+
+        const syncedProfiles = [];
+        let hasErrors = false;
+        let lastErrMessage = '';
+
+        for (const block of socialBlocks) {
+            const handle = (block.configuration?.username || block.configuration?.handle || '').trim().replace(/^@/, '');
+            if (!handle) continue;
+
+            try {
+                const spDoc = await getOrFetchSocialProfile({
+                    userId,
+                    profileBlockId: block._id,
+                    platform: block.blockType,
+                    username: handle,
+                    forceRefresh: forceRefresh
+                });
+
+                if (spDoc) {
+                    syncedProfiles.push(spDoc);
+                }
+            } catch (err) {
+                console.error(`[Bento Sync Service] Failed sync for ${block.blockType}:${handle} (User: ${userId}):`, err.message);
+                hasErrors = true;
+                lastErrMessage = err.message;
+            }
+        }
+
+        const lastSyncedAt = new Date();
+        const finalStatus = (syncedProfiles.length === 0 && socialBlocks.length > 0 && hasErrors) ? 'failed' : 'success';
+
+        await Profile.updateOne(
+            { userId },
+            {
+                $set: {
+                    'syncMetadata.lastSyncedAt': lastSyncedAt,
+                    'syncMetadata.syncStatus': finalStatus,
+                    'syncMetadata.syncSource': syncSource,
+                    'syncMetadata.syncError': hasErrors ? lastErrMessage : ''
+                }
+            }
+        );
+
+        // 4. Fetch updated blocks and social profiles
+        const [updatedBlocks, allSocialProfiles] = await Promise.all([
+            ProfileBlock.find({ userId }).sort({ order: 1, createdAt: 1 }).lean(),
+            SocialProfile.find({ userId }).lean()
+        ]);
+
+        const blocksWithSocial = attachSocialProfilesToBlocks(updatedBlocks, allSocialProfiles);
+
+        return {
+            success: true,
+            syncStatus: finalStatus,
+            lastSyncedAt,
+            blocks: blocksWithSocial,
+            socialProfiles: allSocialProfiles
+        };
+    } catch (err) {
+        console.error(`[Bento Sync Service Error] Global failure for user ${userId}:`, err);
+
+        await Profile.updateOne(
+            { userId },
+            {
+                $set: {
+                    'syncMetadata.syncStatus': 'failed',
+                    'syncMetadata.syncError': err.message || 'Synchronization failed'
+                }
+            }
+        );
+
+        throw err;
+    }
+};
+
+/**
+ * Helper to attach populated SocialProfile documents onto Bento blocks
+ */
+function attachSocialProfilesToBlocks(blocks = [], socialProfiles = []) {
+    if (!Array.isArray(blocks) || !Array.isArray(socialProfiles)) return blocks;
+
+    const mapById = new Map();
+    const mapByPlatformHandle = new Map();
+    const mapByPlatform = new Map();
+
+    socialProfiles.forEach(sp => {
+        if (sp.profileBlockId) mapById.set(sp.profileBlockId.toString(), sp);
+        if (sp.platform && sp.username) mapByPlatformHandle.set(`${sp.platform}:${sp.username.toLowerCase().trim()}`, sp);
+        if (sp.platform) mapByPlatform.set(sp.platform, sp);
+    });
+
+    return blocks.map(b => {
+        const bObj = { ...b, id: b._id || b.id };
+        const handle = (b.configuration?.username || b.configuration?.handle || b.configuration?.title || '').toLowerCase().trim().replace(/^@/, '');
+        const keyByHandle = b.blockType && handle ? `${b.blockType}:${handle}` : '';
+
+        let spDoc = null;
+        if (b._id && mapById.has(b._id.toString())) {
+            spDoc = mapById.get(b._id.toString());
+        } else if (keyByHandle && mapByPlatformHandle.has(keyByHandle)) {
+            spDoc = mapByPlatformHandle.get(keyByHandle);
+        } else if (b.blockType && mapByPlatform.has(b.blockType)) {
+            spDoc = mapByPlatform.get(b.blockType);
+        }
+
+        if (spDoc) {
+            const basicInfo = spDoc.basic_info || spDoc.basicInfo || spDoc.rawData?.basic_info || spDoc.rawData?.basicInfo || spDoc.rawData || {};
+
+            const fullName = basicInfo.fullname || basicInfo.fullName || basicInfo.name || spDoc.displayName || spDoc.fullName || spDoc.name || spDoc.username || '';
+            const profileImg = basicInfo.profile_picture_url || basicInfo.profile_picture || basicInfo.profilePicUrl || spDoc.profileImage || spDoc.avatarUrl || spDoc.profilePicture || '';
+            const headline = basicInfo.headline || spDoc.headline || '';
+            const location = basicInfo.location || basicInfo.locationFull || spDoc.location || '';
+            const bio = basicInfo.about || basicInfo.summary || basicInfo.bio || spDoc.description || spDoc.bio || '';
+            const followers = Number(basicInfo.follower_count ?? basicInfo.followers_count ?? basicInfo.followerCount ?? spDoc.followers ?? spDoc.followersCount ?? 0);
+            const following = Number(spDoc.following ?? spDoc.followingCount ?? basicInfo.following_count ?? basicInfo.followingCount ?? 0);
+            const posts = Number(spDoc.posts ?? spDoc.postsCount ?? basicInfo.posts_count ?? basicInfo.postsCount ?? 0);
+            const connections = Number(basicInfo.connection_count ?? basicInfo.connections_count ?? basicInfo.connectionCount ?? spDoc.connectionsCount ?? (spDoc.platform !== 'instagram' ? following : 0));
+            const currentCompany = basicInfo.current_company || basicInfo.currentCompanyName || basicInfo.currentCompany || spDoc.currentCompany || '';
+
+            bObj.socialProfile = {
+                ...spDoc,
+                basic_info: basicInfo,
+                displayName: fullName || spDoc.displayName || spDoc.username,
+                fullName: fullName || spDoc.displayName || spDoc.username,
+                profileImage: profileImg,
+                avatarUrl: profileImg,
+                profilePicture: profileImg,
+                headline: headline,
+                location: location,
+                description: bio,
+                bio: bio,
+                followers: followers,
+                followersCount: followers,
+                following: following,
+                followingCount: following,
+                posts: posts,
+                postsCount: posts,
+                connectionsCount: connections,
+                connections: connections,
+                currentCompany: currentCompany,
+                recentContent: spDoc.recentContent || spDoc.recentPosts || [],
+                recentPosts: spDoc.recentContent || spDoc.recentPosts || []
+            };
+        }
+        return bObj;
+    });
+}
+
 module.exports = {
     normalizeSocialHandle,
     syncSetupSocialLinksToBento,
+    syncUserBentoData,
     SUPPORTED_SOCIAL_PLATFORMS
 };
+

@@ -109,7 +109,7 @@ const handleResendOtp = async () => {
         </div>
 
         <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.5rem', fontWeight: 700, color: '#111', marginBottom: 8 }}>
-          Reset Password
+          Change Password
         </h2>
         <div
             style={{

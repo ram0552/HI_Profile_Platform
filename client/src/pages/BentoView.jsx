@@ -142,6 +142,15 @@ export default function BentoView({ isPublic = false }) {
   const [formBgColor, setFormBgColor] = useState('#F8FAFC')
   const [checklistItems, setChecklistItems] = useState(['', '', ''])
 
+  // Image Card States (Upload Base64 & External URL)
+  const [imageSourceMode, setImageSourceMode] = useState('upload') // 'upload' | 'url'
+  const [imageBase64, setImageBase64] = useState('')
+  const [imageUrlInput, setImageUrlInput] = useState('')
+  const [imageUrlError, setImageUrlError] = useState(false)
+  const [isDraggingImage, setIsDraggingImage] = useState(false)
+  const [imageValidationError, setImageValidationError] = useState(null)
+  const imageFileInputRef = useRef(null)
+
   // Social Cache State
   const [socialStats, setSocialStats] = useState({})
 
@@ -1195,6 +1204,70 @@ export default function BentoView({ isPublic = false }) {
   };
 
 
+  // Local Image Upload Helpers (Base64 conversion via native FileReader API)
+  const handleLocalImageFile = (file) => {
+    if (!file) return;
+
+    // Validate MIME type & file extension
+    const validMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    const validExtensions = /\.(jpe?g|png|webp)$/i;
+    const isMimeValid = validMimeTypes.includes(file.type);
+    const isExtValid = validExtensions.test(file.name);
+
+    if (!isMimeValid && !isExtValid) {
+      setImageValidationError('Unsupported file format. Please upload a JPG, JPEG, PNG, or WEBP image.');
+      return;
+    }
+
+    // Validate size (max 3MB = 3,145,728 bytes)
+    const MAX_FILE_SIZE = 3 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      setImageValidationError('Image file is too large. Maximum allowed size is 3MB.');
+      return;
+    }
+
+    setImageValidationError(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result;
+      if (dataUrl && typeof dataUrl === 'string' && dataUrl.startsWith('data:image/')) {
+        setImageBase64(dataUrl);
+        setImageValidationError(null);
+      } else {
+        setImageValidationError('Failed to convert image to Base64.');
+      }
+    };
+    reader.onerror = () => {
+      setImageValidationError('Error reading the selected image file.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleLocalImageFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleLocalImageFile(file);
+    }
+  };
+
+  const handleImageDrop = (e) => {
+    e.preventDefault();
+    setIsDraggingImage(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      handleLocalImageFile(file);
+    }
+  };
+
+  const handleRemoveSelectedImage = () => {
+    setImageBase64('');
+    setImageValidationError(null);
+    if (imageFileInputRef.current) {
+      imageFileInputRef.current.value = '';
+    }
+  };
+
   // Dialog Controls
   const openAddDialog = (type) => {
     setIsPickerOpen(false);
@@ -1211,6 +1284,16 @@ export default function BentoView({ isPublic = false }) {
       { id: `chk_2_${Date.now()}`, text: '', completed: false },
       { id: `chk_3_${Date.now()}`, text: '', completed: false }
     ]);
+    if (type === 'image') {
+      setImageSourceMode('upload');
+      setImageBase64('');
+      setImageUrlInput('');
+      setImageUrlError(false);
+      setImageValidationError(null);
+      if (imageFileInputRef.current) {
+        imageFileInputRef.current.value = '';
+      }
+    }
   };
 
   const openEditDialog = (block) => {
@@ -1235,11 +1318,36 @@ export default function BentoView({ isPublic = false }) {
         };
       }));
     }
+    if (block.blockType === 'image') {
+      const rawUrl = block.configuration?.imageUrl || block.configuration?.image || '';
+      const isBase64 = block.configuration?.imageSourceType === 'base64' || (typeof rawUrl === 'string' && rawUrl.startsWith('data:image/'));
+
+      setImageValidationError(null);
+      setImageUrlError(false);
+
+      if (isBase64) {
+        setImageSourceMode('upload');
+        setImageBase64(rawUrl);
+        setImageUrlInput('');
+      } else {
+        setImageSourceMode('url');
+        setImageUrlInput(rawUrl);
+        setImageBase64('');
+      }
+      if (imageFileInputRef.current) {
+        imageFileInputRef.current.value = '';
+      }
+    }
   };
 
   const closeDialog = () => {
     setActiveDialog(null);
     setEditingBlock(null);
+    setImageBase64('');
+    setImageUrlInput('');
+    setImageValidationError(null);
+    setImageUrlError(false);
+    setIsDraggingImage(false);
   };
 
   // Save Block (Optimistic UI Update)
@@ -1290,17 +1398,35 @@ export default function BentoView({ isPublic = false }) {
       configObj = { title: formTitle.trim() || 'My Checklist', items };
       layoutObj = { w: 2, h: 2 };
     } else if (activeDialog === 'image') {
-      let imgUrl = convertGoogleDriveUrl(formUrl.trim());
-      if (!imgUrl) {
-        toast('Image URL is required');
-        return;
+      if (imageSourceMode === 'upload') {
+        if (!imageBase64 || !imageBase64.trim()) {
+          toast('Please select an image to upload');
+          return;
+        }
+        configObj = {
+          title: formTitle.trim() || 'Image Card',
+          imageSourceType: 'base64',
+          imageUrl: imageBase64
+        };
+        layoutObj = { w: 2, h: 2 };
+      } else {
+        const rawUrl = imageUrlInput.trim();
+        const imgUrl = convertGoogleDriveUrl(rawUrl);
+        if (!imgUrl) {
+          toast('Image URL is required');
+          return;
+        }
+        if (!/^https?:\/\//i.test(imgUrl)) {
+          toast('Please enter a valid HTTP or HTTPS image URL');
+          return;
+        }
+        configObj = {
+          title: formTitle.trim() || 'Image Card',
+          imageSourceType: 'url',
+          imageUrl: imgUrl
+        };
+        layoutObj = { w: 2, h: 2 };
       }
-      if (imgUrl.startsWith('data:image/')) {
-        toast('Base64 image encoding is not supported. Please provide a valid Cloudinary/S3 image URL.');
-        return;
-      }
-      configObj = { title: formTitle.trim() || 'Image Card', imageUrl: imgUrl };
-      layoutObj = { w: 2, h: 2 };
     } else if (['instagram', 'github', 'youtube', 'twitter', 'linkedin'].includes(activeDialog)) {
       if (!formHandle.trim()) {
         toast(`${activeDialog.toUpperCase()} handle/username is required`);
@@ -2176,7 +2302,7 @@ export default function BentoView({ isPublic = false }) {
           <div style={{ background: '#FFFFFF', borderRadius: 24, padding: 32, maxWidth: 500, width: '100%', boxShadow: '0 25px 50px rgba(0,0,0,0.25)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
               <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 800, color: '#0F172A', textTransform: 'capitalize' }}>
-                {editingBlock ? `Edit ${activeDialog}` : `Configure ${activeDialog}`}
+                {activeDialog === 'image' ? 'Configure Image' : (editingBlock ? `Edit ${activeDialog}` : `Configure ${activeDialog}`)}
               </h3>
               <button onClick={closeDialog} style={{ background: '#F1F5F9', border: 'none', width: 32, height: 32, borderRadius: '50%', fontSize: '1.2rem', cursor: 'pointer' }}>×</button>
             </div>
@@ -2279,12 +2405,214 @@ export default function BentoView({ isPublic = false }) {
               {activeDialog === 'image' && (
                 <>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: 6 }}>Caption / Title</label>
-                    <input type="text" value={formTitle} onChange={(e) => setFormTitle(e.target.value)} placeholder="e.g. Workspace Shot" style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1px solid #CBD5E1', fontSize: '0.95rem' }} />
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: 6 }}>
+                      Caption / Title
+                    </label>
+                    <input
+                      type="text"
+                      value={formTitle}
+                      onChange={(e) => setFormTitle(e.target.value)}
+                      placeholder="e.g. Workspace Shot"
+                      style={{
+                        width: '100%',
+                        padding: '10px 14px',
+                        borderRadius: 10,
+                        border: '1px solid #CBD5E1',
+                        fontSize: '0.95rem',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    />
                   </div>
+
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: 6 }}>Cloudinary / S3 Image URL</label>
-                    <input type="url" value={formUrl} onChange={(e) => setFormUrl(e.target.value)} placeholder="https://images.unsplash.com/..." style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1px solid #CBD5E1', fontSize: '0.95rem' }} />
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 700, color: '#475569', marginBottom: 8 }}>
+                      Image Source
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImageSourceMode('upload');
+                          setImageValidationError(null);
+                        }}
+                        style={{
+                          padding: '10px 16px',
+                          borderRadius: 10,
+                          fontWeight: 700,
+                          fontSize: '0.88rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                          border: imageSourceMode === 'upload' ? '2px solid #4F46E5' : '1px solid #E2E8F0',
+                          background: imageSourceMode === 'upload' ? '#EEF2FF' : '#F8FAFC',
+                          color: imageSourceMode === 'upload' ? '#4F46E5' : '#64748B',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <span>📁</span> Upload Image
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImageSourceMode('url');
+                          setImageValidationError(null);
+                        }}
+                        style={{
+                          padding: '10px 16px',
+                          borderRadius: 10,
+                          fontWeight: 700,
+                          fontSize: '0.88rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                          border: imageSourceMode === 'url' ? '2px solid #4F46E5' : '1px solid #E2E8F0',
+                          background: imageSourceMode === 'url' ? '#EEF2FF' : '#F8FAFC',
+                          color: imageSourceMode === 'url' ? '#4F46E5' : '#64748B',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <span>🔗</span> Image URL
+                      </button>
+                    </div>
+
+                    {/* Mode 1: Local Image Upload */}
+                    {imageSourceMode === 'upload' && (
+                      <div>
+                        <input
+                          type="file"
+                          ref={imageFileInputRef}
+                          accept="image/jpeg,image/png,image/webp,image/jpg,.jpg,.jpeg,.png,.webp"
+                          style={{ display: 'none' }}
+                          onChange={handleLocalImageFileChange}
+                        />
+
+                        {!imageBase64 ? (
+                          <div
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              setIsDraggingImage(true);
+                            }}
+                            onDragLeave={() => setIsDraggingImage(false)}
+                            onDrop={handleImageDrop}
+                            onClick={() => imageFileInputRef.current?.click()}
+                            style={{
+                              border: isDraggingImage ? '2px dashed #4F46E5' : '2px dashed #CBD5E1',
+                              background: isDraggingImage ? '#EEF2FF' : '#F8FAFC',
+                              borderRadius: 14,
+                              padding: '28px 20px',
+                              textAlign: 'center',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease'
+                            }}
+                          >
+                            <div style={{ fontSize: '2rem', marginBottom: 8 }}>🖼️</div>
+                            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#1E293B', marginBottom: 4 }}>
+                              Upload Image
+                            </div>
+                            <div style={{ fontSize: '0.85rem', color: '#64748B', marginBottom: 8 }}>
+                              Click to browse or drag image
+                            </div>
+                            <div style={{ display: 'inline-block', background: '#E2E8F0', color: '#475569', fontSize: '0.75rem', fontWeight: 600, padding: '3px 10px', borderRadius: 20 }}>
+                              JPG • JPEG • PNG • WEBP
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', border: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+                            <div style={{ height: 180, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#0F172A' }}>
+                              <img
+                                src={imageBase64}
+                                alt="Selected preview"
+                                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#FFFFFF', borderTop: '1px solid #E2E8F0' }}>
+                              <span style={{ fontSize: '0.82rem', color: '#10B981', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                ✓ Ready to save
+                              </span>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => imageFileInputRef.current?.click()}
+                                  style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', color: '#334155', padding: '5px 10px', borderRadius: 8, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
+                                >
+                                  Change
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleRemoveSelectedImage}
+                                  style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#EF4444', padding: '5px 10px', borderRadius: 8, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Mode 2: External Image URL */}
+                    {imageSourceMode === 'url' && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, color: '#64748B', marginBottom: 6 }}>
+                            Image URL
+                          </label>
+                          <input
+                            type="url"
+                            value={imageUrlInput}
+                            onChange={(e) => {
+                              setImageUrlInput(e.target.value);
+                              setImageUrlError(false);
+                              setImageValidationError(null);
+                            }}
+                            placeholder="https://example.com/image.jpg"
+                            style={{
+                              width: '100%',
+                              padding: '10px 14px',
+                              borderRadius: 10,
+                              border: '1px solid #CBD5E1',
+                              fontSize: '0.95rem',
+                              outline: 'none',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                        </div>
+
+                        {/* URL Live Preview */}
+                        {imageUrlInput.trim() && (
+                          <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #E2E8F0', background: '#F8FAFC' }}>
+                            <div style={{ height: 160, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0F172A', position: 'relative' }}>
+                              {!imageUrlError ? (
+                                <img
+                                  src={convertGoogleDriveUrl(imageUrlInput.trim())}
+                                  alt="URL Preview"
+                                  onError={() => setImageUrlError(true)}
+                                  onLoad={() => setImageUrlError(false)}
+                                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                                />
+                              ) : (
+                                <div style={{ color: '#F87171', fontSize: '0.85rem', fontWeight: 600, textAlign: 'center', padding: 12 }}>
+                                  ⚠️ Unable to load image preview from this URL.<br />Please verify the URL is valid and accessible.
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Validation Error Banner */}
+                    {imageValidationError && (
+                      <div style={{ marginTop: 10, padding: '8px 12px', background: '#FEF2F2', border: '1px solid #FCA5A5', borderRadius: 8, color: '#DC2626', fontSize: '0.85rem', fontWeight: 600 }}>
+                        {imageValidationError}
+                      </div>
+                    )}
                   </div>
                 </>
               )}

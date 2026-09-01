@@ -122,7 +122,7 @@ export default function ResetPasswordSection({ accessToken, toast }) {
               e.currentTarget.style.borderColor = '#C7D2FE';
             }}
           >
-            Reset Password
+            Change Password
           </button>
         )}
       </div>

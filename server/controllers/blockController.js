@@ -24,18 +24,68 @@ const VALID_BLOCK_TYPES = [
 const SOCIAL_PLATFORMS = ['instagram', 'github', 'youtube', 'twitter', 'linkedin', 'dribbble'];
 
 /**
- * Validate Image URLs (Reject Base64 dataURIs)
+ * Validate Image URLs and Base64 Data URLs
+ * Supports:
+ * 1. Base64 Data URLs (JPG, JPEG, PNG, WEBP) with reasonable size limit (up to ~4.5MB payload / ~3MB raw)
+ * 2. External HTTP/HTTPS URLs (up to 2000 chars)
  */
-const validateImageUrl = (url) => {
-    if (!url || typeof url !== 'string') return true;
+const validateImageUrl = (url, sourceType = null) => {
+    if (!url || typeof url !== 'string') {
+        return { valid: false, message: 'Image data is required.' };
+    }
     const trimmed = url.trim();
-    if (trimmed.startsWith('data:image/')) {
-        return false; // Reject Base64
+    if (!trimmed) {
+        return { valid: false, message: 'Image data cannot be empty.' };
     }
+
+    const isBase64 = sourceType === 'base64' || trimmed.startsWith('data:image/');
+    if (isBase64) {
+        // Enforce supported image MIME types in Base64 Data URL
+        const prefixMatch = trimmed.match(/^data:image\/(jpeg|jpg|png|webp);base64,/i);
+        if (!prefixMatch) {
+            return {
+                valid: false,
+                message: 'Invalid image format. Supported formats are JPG, JPEG, PNG, and WEBP.'
+            };
+        }
+
+        // Maximum payload size check (~4.5MB for Base64 Data URL, corresponding to ~3MB raw file)
+        const MAX_BASE64_LENGTH = 4.5 * 1024 * 1024;
+        if (trimmed.length > MAX_BASE64_LENGTH) {
+            return {
+                valid: false,
+                message: 'Image size exceeds the maximum allowed limit of 3MB.'
+            };
+        }
+
+        // Basic Base64 character validation
+        const base64Data = trimmed.slice(prefixMatch[0].length);
+        if (!base64Data || !/^[A-Za-z0-9+/=]+$/.test(base64Data)) {
+            return {
+                valid: false,
+                message: 'Malformed Base64 image data.'
+            };
+        }
+
+        return { valid: true };
+    }
+
+    // External URL validation
     if (trimmed.length > 2000) {
-        return false; // Reject oversized strings
+        return {
+            valid: false,
+            message: 'Image URL exceeds maximum length of 2000 characters.'
+        };
     }
-    return true;
+
+    if (!/^https?:\/\//i.test(trimmed)) {
+        return {
+            valid: false,
+            message: 'Image URL must start with http:// or https://'
+        };
+    }
+
+    return { valid: true };
 };
 
 /**
@@ -62,10 +112,11 @@ const validateBlockConfig = (blockType, configuration = {}) => {
         case 'image': {
             const imgUrl = configuration.imageUrl || configuration.image;
             if (!imgUrl || typeof imgUrl !== 'string' || !imgUrl.trim()) {
-                return 'Image URL is required for image block';
+                return 'Image is required for image block';
             }
-            if (!validateImageUrl(imgUrl)) {
-                return 'Base64 image encoding is not supported. Please provide a valid Cloudinary/S3 or HTTPS image URL.';
+            const validation = validateImageUrl(imgUrl, configuration.imageSourceType);
+            if (!validation.valid) {
+                return validation.message;
             }
             break;
         }
@@ -502,13 +553,16 @@ const updateBlock = async (req, res) => {
         let socialProfileData = null;
 
         if (configuration !== undefined) {
-            if (configuration.imageUrl || configuration.image) {
+            if (configuration.imageUrl || configuration.image || block.blockType === 'image') {
                 const imgUrl = configuration.imageUrl || configuration.image;
-                if (!validateImageUrl(imgUrl)) {
-                    return res.status(400).json({
-                        success: false,
-                        message: 'Base64 image encoding is not supported. Please provide a valid Cloudinary/S3 or HTTPS image URL.'
-                    });
+                if (imgUrl) {
+                    const validation = validateImageUrl(imgUrl, configuration.imageSourceType);
+                    if (!validation.valid) {
+                        return res.status(400).json({
+                            success: false,
+                            message: validation.message
+                        });
+                    }
                 }
             }
 
